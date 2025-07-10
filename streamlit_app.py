@@ -7,23 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Try to import SPEAKER_MAPPING from config, with fallback
-try:
-    from config import SPEAKER_MAPPING
-except ImportError:
-    # Fallback speaker mapping if config.py is not found
-    SPEAKER_MAPPING = {
-        "speaker_0": "Mysteryshopper",
-        "speaker_1": "InsuranceAgent", 
-        "speaker_2": "Mysteryshopper",
-        "speaker_3": "InsuranceAgent",
-        "speaker_4": "Mysteryshopper",
-        "speaker_5": "InsuranceAgent",
-        "speaker_6": "Mysteryshopper",
-        "speaker_7": "InsuranceAgent",
-        "speaker_8": "Mysteryshopper",
-        "speaker_9": "InsuranceAgent",
-    }
+# No config import needed for the reverted approach
 # Load environment variables from .env file (for local development)
 # For Streamlit Cloud, secrets are handled via st.secrets
 try:
@@ -86,8 +70,6 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
 
         # Prepend explicit vars to ensure they exist even if originals are commented out
         preface = (
-            f'import sys\n'
-            f'sys.path.insert(0, "{audioui_dir}")\n'
             f'AUDIO_FILE = "{abs_audio}"\n'
             f'OUTPUT_FOLDER = "{abs_out}"\n'
         )
@@ -144,9 +126,6 @@ def run_chunking(csv_file_path, output_folder):
         with open(script_path, 'r') as f:
             script_content = f.read()
         
-        # Add path insertion at the beginning
-        path_insertion = f'import sys\nsys.path.insert(0, "{audioui_dir}")\n'
-        
         # Replace the hardcoded paths with absolute paths
         modified_content = script_content.replace(
             'INPUT_CSV = "/home/alexong/intage/1476_JunKaiOng_GEFA_m2_merged.csv"',
@@ -161,9 +140,6 @@ def run_chunking(csv_file_path, output_folder):
             '/home/alexong/intage',
             f'{os.path.abspath(output_folder)}'
         )
-        
-        # Add the path insertion at the beginning
-        modified_content = path_insertion + modified_content
         
         # Write temporary script
         temp_script = os.path.join(output_folder, "temp_chunk.py")
@@ -248,12 +224,14 @@ def find_output_files(output_folder, base_name):
 # -------------------------------------------------------------
 
 def normalize_speaker_names(csv_path):
-    """Map speaker IDs to Mysteryshopper/InsuranceAgent using SPEAKER_MAPPING from config.py.
+    """Map speaker IDs to Mysteryshopper/InsuranceAgent based on speaker number patterns.
+    Even-numbered speakers (0, 2, 4, 6...) ➜ Mysteryshopper
+    Odd-numbered speakers (1, 3, 5, 7...) ➜ InsuranceAgent
     First speaker (speaker_0) always maps to Mysteryshopper as per project requirements."""
     try:
         df = pd.read_csv(csv_path)
 
-        # Build mapping based on SPEAKER_MAPPING from config
+        # Build mapping based on speaker patterns
         id_to_label = {}
         
         for raw_id in df['Speaker'].unique():
@@ -263,37 +241,33 @@ def normalize_speaker_names(csv_path):
                 continue
             
             # Handle raw speaker IDs that might have escaped initial mapping
-            speaker_id_str = str(raw_id)
-            mapped_name = None
-            
-            # Try direct mapping first
-            if raw_id in SPEAKER_MAPPING:
-                mapped_name = SPEAKER_MAPPING[raw_id]
-            elif 'speaker_' in speaker_id_str:
+            if 'speaker_' in str(raw_id):
                 # Extract speaker number from various formats
+                speaker_id_str = str(raw_id)
+                
+                # Handle formats like "SPEAKER_speaker_4" or "speaker_4"
                 if 'SPEAKER_speaker_' in speaker_id_str:
                     speaker_num_str = speaker_id_str.replace('SPEAKER_speaker_', '')
                 elif 'speaker_' in speaker_id_str:
                     speaker_num_str = speaker_id_str.split('speaker_')[-1]
                 else:
-                    speaker_num_str = None
+                    # Fallback: treat as unknown
+                    id_to_label[raw_id] = 'Mysteryshopper'
+                    continue
                 
-                if speaker_num_str:
-                    try:
-                        speaker_num = int(speaker_num_str)
-                        # Use the mapping from config.py
-                        mapped_key = f"speaker_{speaker_num}"
-                        mapped_name = SPEAKER_MAPPING.get(mapped_key, None)
-                        # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
-                        if mapped_name is None:
-                            mapped_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
-                    except ValueError:
-                        pass
-            
-            # If we found a mapping, use it; otherwise default to Mysteryshopper
-            final_name = mapped_name if mapped_name else 'Mysteryshopper'
-            id_to_label[raw_id] = final_name
-        
+                try:
+                    speaker_num = int(speaker_num_str)
+                    # Map even-numbered speakers (0, 2, 4, 6...) to Mysteryshopper
+                    # Map odd-numbered speakers (1, 3, 5, 7...) to InsuranceAgent
+                    # This ensures speaker_0 is always Mysteryshopper per project requirements
+                    id_to_label[raw_id] = 'Mysteryshopper' if speaker_num % 2 == 0 else 'InsuranceAgent'
+                except ValueError:
+                    # If we can't parse the number, default to Mysteryshopper
+                    id_to_label[raw_id] = 'Mysteryshopper'
+            else:
+                # Unknown format, default to Mysteryshopper
+                id_to_label[raw_id] = 'Mysteryshopper'
+
         # Apply the mapping
         df['Speaker'] = df['Speaker'].map(id_to_label)
         df.to_csv(csv_path, index=False)
@@ -965,7 +939,6 @@ def main():
                         if success_ck:
                             progress_bar.progress(1.0)
                             status_text.text("✅ Processing complete!")
-                            st.success("🎯 Chunking completed successfully! 5 conversation segments combined into 1 row with preserved speaker attribution.")
 
                             # Find all output files (use base_name, not base_name_merged)
                             output_files = find_output_files(output_folder, base_name)

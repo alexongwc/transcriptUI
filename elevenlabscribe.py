@@ -15,7 +15,6 @@ import ssl
 import glob
 import math
 from dotenv import load_dotenv
-from config import SPEAKER_MAPPING
 
 # Load environment variables from .env file
 load_dotenv()
@@ -394,58 +393,35 @@ def process_single_audio_file():
         
         # Convert to dataframe format
         df_segments = []
-        
-        # Debug: Check what raw speaker IDs we're getting
-        raw_speakers = [segment["speaker"] for segment in all_segments]
-        unique_raw_speakers = list(set(raw_speakers))
-        print(f"\n🔍 DEBUG: Raw speaker IDs from API: {unique_raw_speakers}")
-        print(f"📊 Total segments: {len(all_segments)}, Unique speakers: {len(unique_raw_speakers)}")
-        print(f"🗺️ SPEAKER_MAPPING config: {SPEAKER_MAPPING}")
-        
         for segment in all_segments:
-            # Rename speakers using the SPEAKER_MAPPING from config
-            speaker_id = segment["speaker"]
-            speaker_name = speaker_id  # Default fallback
-            
-            # Debug: Show first few mappings
-            if len(df_segments) < 5:
-                print(f"🎯 Mapping speaker {len(df_segments)+1}: '{speaker_id}' -> processing...")
-            
-            # Handle various speaker ID formats
-            if speaker_id.startswith("SPEAKER_speaker_"):
-                # Extract speaker number from format like "SPEAKER_speaker_4"
-                speaker_num_str = speaker_id.replace("SPEAKER_speaker_", "")
-                try:
-                    speaker_num = int(speaker_num_str)
-                    # Use the mapping from config.py
-                    mapped_key = f"speaker_{speaker_num}"
-                    speaker_name = SPEAKER_MAPPING.get(mapped_key, None)
-                    # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
-                    if speaker_name is None:
-                        speaker_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
-                except ValueError:
-                    # If we can't parse the number, try direct mapping
-                    speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
-            elif speaker_id.startswith("SPEAKER_"):
-                # Handle format like "SPEAKER_0", "SPEAKER_1", etc.
-                speaker_num_str = speaker_id.replace("SPEAKER_", "")
-                try:
-                    speaker_num = int(speaker_num_str)
-                    mapped_key = f"speaker_{speaker_num}"
-                    speaker_name = SPEAKER_MAPPING.get(mapped_key, None)
-                    # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
-                    if speaker_name is None:
-                        speaker_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
-                except ValueError:
-                    speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
+            # Rename speakers - robust handling of raw speaker IDs coming from ElevenLabs
+            speaker_id = segment["speaker"]  # e.g. "0", "1", "speaker_0", "SPEAKER_1", "SPEAKER_speaker_2"
+
+            speaker_num = None
+            if isinstance(speaker_id, str):
+                if speaker_id.isdigit():
+                    # Plain number as string ("0", "1", ...)
+                    speaker_num = int(speaker_id)
+                elif "speaker_" in speaker_id.lower():
+                    # Handle patterns containing "speaker_" (case-insensitive)
+                    # Split on the last underscore and take the suffix digits
+                    try:
+                        speaker_num = int(speaker_id.split("_")[-1])
+                    except ValueError:
+                        speaker_num = None
+                elif speaker_id.upper().startswith("SPEAKER_"):
+                    # Pattern like "SPEAKER_0", "SPEAKER_1"
+                    try:
+                        speaker_num = int(speaker_id.split("_")[-1])
+                    except ValueError:
+                        speaker_num = None
+
+            if speaker_num is not None:
+                speaker_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
             else:
-                # Try direct mapping for any other formats
-                speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
-            
-            # Debug: Show first few final mappings
-            if len(df_segments) < 5:
-                print(f"  ✅ Final result: '{speaker_id}' -> '{speaker_name}'")
-            
+                # Fallback – keep the raw ID if we cannot parse a number
+                speaker_name = speaker_id
+
             df_segments.append({
                 "Start Time": format_timestamp(segment["start"]),
                 "End Time": format_timestamp(segment["end"]),
@@ -453,14 +429,6 @@ def process_single_audio_file():
                 "Text": segment["text"],
                 "Label": ""
             })
-        
-        # Debug: Show final speaker distribution
-        final_speakers = [seg["Speaker"] for seg in df_segments]
-        final_unique_speakers = list(set(final_speakers))
-        speaker_counts = {speaker: final_speakers.count(speaker) for speaker in final_unique_speakers}
-        print(f"\n📊 FINAL SPEAKER DISTRIBUTION:")
-        for speaker, count in speaker_counts.items():
-            print(f"   {speaker}: {count} segments")
         
         # Get base name for output files
         base_name = os.path.splitext(os.path.basename(AUDIO_FILE))[0]
