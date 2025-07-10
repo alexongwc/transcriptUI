@@ -791,23 +791,11 @@ def main():
     # Check API key availability
     api_key = get_api_key()
     if not api_key:
-        st.error("🔑 **API Key Required**")
-        st.markdown("""
-        To use this application, you need to provide your ElevenLabs API key:
-        
-        **For Streamlit Cloud:**
-        - Go to your app settings in Streamlit Cloud
-        - Add a secret: `XI_API_KEY = "your_api_key_here"`
-        
-        **For Local Development:**
-        - Create a `.env` file with: `XI_API_KEY=your_api_key_here`
-        - Or set environment variable: `export XI_API_KEY=your_api_key_here`
-        
-        [Get your ElevenLabs API key here](https://elevenlabs.io/app/speech-synthesis/speech-to-text)
-        """)
+        st.error("🔑 **Configuration Error**")
+        st.markdown("Please contact support - API configuration is missing.")
         st.stop()
     else:
-        st.success(f"✅ API Key loaded (ends with: ...{api_key[-4:]})")
+        st.success("✅ Ready for transcription")
 
     # Show existing results if present
     if 'zip_data' in st.session_state and 'output_files' in st.session_state:

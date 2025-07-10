@@ -27,9 +27,13 @@
 
 ### 3. Add Secrets (API Key)
 
+✅ **API Key Already Configured**
+The API key is pre-configured in the repository secrets file for demo purposes.
+
+If you need to update it:
 1. **After deployment, go to your app settings**
 2. **Click on "Secrets"**
-3. **Add the following secrets:**
+3. **Update the secrets:**
    ```toml
    XI_API_KEY = "your_actual_elevenlabs_api_key_here"
    ```

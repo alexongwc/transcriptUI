@@ -12,12 +12,17 @@ A Streamlit-based web application for transcribing audio files using ElevenLabs 
 - 🔍 **Quality Control**: Detect and flag gibberish or low-quality transcription segments
 - 📈 **Processing Logs**: Detailed logs of the transcription process
 
-## Setup
+## Demo Access
+
+This application is ready to use! The API key is pre-configured for demo purposes.
+
+**Live Demo:** [Access the application here](https://intageaudio.streamlit.app)
+
+## Local Development Setup (Optional)
 
 ### Prerequisites
 
 - Python 3.8 or higher
-- ElevenLabs API key
 
 ### Installation
 
@@ -32,7 +37,7 @@ A Streamlit-based web application for transcribing audio files using ElevenLabs 
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables:**
+3. **Set up environment variables (for local development):**
    
    Copy the example environment file:
    ```bash
