@@ -14,6 +14,10 @@ import certifi
 import ssl
 import glob
 import math
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration - use environment variable for API key
 API_KEY = os.getenv("XI_API_KEY")

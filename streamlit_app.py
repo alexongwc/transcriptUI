@@ -6,6 +6,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 # Optional DOCX generation
 try:
     import docx
@@ -51,9 +55,15 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         with open(temp_script, 'w') as f:
             f.write(modified_content)
         
+        # Create environment for subprocess with API key
+        env = os.environ.copy()
+        api_key = os.getenv("XI_API_KEY")
+        if api_key:
+            env["XI_API_KEY"] = api_key
+        
         # Run the script from the audioUI directory
         result = subprocess.run([sys.executable, temp_script], 
-                              capture_output=True, text=True, cwd=audioui_dir)
+                              capture_output=True, text=True, cwd=audioui_dir, env=env)
         
         # Clean up temp script
         os.remove(temp_script)
@@ -344,18 +354,13 @@ def run_fullfile_transcription(audio_file, output_dir):
     import requests, json
 
     model = "scribe_v1"
-    # Determine API key priority: env var > config import > elevenlabscribe
+    # Load environment variables to ensure API key is available
+    load_dotenv()
+    
+    # Get API key from environment
     api_key = os.getenv("XI_API_KEY")
     if not api_key:
-        try:
-            # If API_KEY is in global namespace (from config import), use it
-            api_key = API_KEY  # type: ignore
-        except NameError:
-            # Fallback to elevenlabscribe constant
-            from elevenlabscribe import API_KEY as EL_API_KEY
-            api_key = EL_API_KEY
-    if not api_key:
-        return False, "No API key available. Set XI_API_KEY env var or update config."  # Early exit
+        return False, "No API key available. Set XI_API_KEY env var in .env file."  # Early exit
     headers = {"xi-api-key": api_key}
     url = "https://api.elevenlabs.io/v1/speech-to-text"
 
