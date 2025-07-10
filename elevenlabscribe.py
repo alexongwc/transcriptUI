@@ -15,6 +15,7 @@ import ssl
 import glob
 import math
 from dotenv import load_dotenv
+from config import SPEAKER_MAPPING
 
 # Load environment variables from .env file
 load_dotenv()
@@ -394,15 +395,34 @@ def process_single_audio_file():
         # Convert to dataframe format
         df_segments = []
         for segment in all_segments:
-            # Rename speakers - handle various speaker ID formats
+            # Rename speakers using the SPEAKER_MAPPING from config
             speaker_id = segment["speaker"]
-            if speaker_id in ["SPEAKER_speaker_0", "SPEAKER_speaker_1"]:
-                speaker_name = "Mysteryshopper" if "speaker_0" in speaker_id else "InsuranceAgent"
-            elif speaker_id in ["SPEAKER_speaker_2", "SPEAKER_speaker_3"]:
-                # Map additional speakers that might appear
-                speaker_name = "Mysteryshopper" if "speaker_2" in speaker_id else "InsuranceAgent"
+            speaker_name = speaker_id  # Default fallback
+            
+            # Handle various speaker ID formats
+            if speaker_id.startswith("SPEAKER_speaker_"):
+                # Extract speaker number from format like "SPEAKER_speaker_4"
+                speaker_num_str = speaker_id.replace("SPEAKER_speaker_", "")
+                try:
+                    speaker_num = int(speaker_num_str)
+                    # Use the mapping from config.py
+                    mapped_key = f"speaker_{speaker_num}"
+                    speaker_name = SPEAKER_MAPPING.get(mapped_key, speaker_id)
+                except ValueError:
+                    # If we can't parse the number, try direct mapping
+                    speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
+            elif speaker_id.startswith("SPEAKER_"):
+                # Handle format like "SPEAKER_0", "SPEAKER_1", etc.
+                speaker_num_str = speaker_id.replace("SPEAKER_", "")
+                try:
+                    speaker_num = int(speaker_num_str)
+                    mapped_key = f"speaker_{speaker_num}"
+                    speaker_name = SPEAKER_MAPPING.get(mapped_key, speaker_id)
+                except ValueError:
+                    speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
             else:
-                speaker_name = speaker_id
+                # Try direct mapping for any other formats
+                speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
             
             df_segments.append({
                 "Start Time": format_timestamp(segment["start"]),

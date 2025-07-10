@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from config import SPEAKER_MAPPING
 # Load environment variables from .env file (for local development)
 # For Streamlit Cloud, secrets are handled via st.secrets
 try:
@@ -216,36 +217,50 @@ def find_output_files(output_folder, base_name):
 # -------------------------------------------------------------
 
 def normalize_speaker_names(csv_path):
-    """Map numeric speaker IDs deterministically: 0 ➜ Mysteryshopper, 1 ➜ InsuranceAgent.
-    Other IDs inherit the last non-null speaker label to avoid duplicates."""
+    """Map speaker IDs to Mysteryshopper/InsuranceAgent using SPEAKER_MAPPING from config.py.
+    First speaker (speaker_0) always maps to Mysteryshopper as per project requirements."""
     try:
         df = pd.read_csv(csv_path)
 
-        # Track the order in which raw speaker IDs appear
-        ordered_ids = []
-        for raw_id in df['Speaker']:
-            if raw_id not in ordered_ids:
-                ordered_ids.append(raw_id)
-
-        # Build deterministic mapping based on first appearance
+        # Build mapping based on SPEAKER_MAPPING from config
         id_to_label = {}
-        if ordered_ids:
-            id_to_label[ordered_ids[0]] = 'Mysteryshopper'
-        if len(ordered_ids) > 1:
-            id_to_label[ordered_ids[1]] = 'InsuranceAgent'
+        
+        for raw_id in df['Speaker'].unique():
+            # Handle already mapped speakers (from elevenlabscribe.py)
+            if raw_id in ['Mysteryshopper', 'InsuranceAgent']:
+                id_to_label[raw_id] = raw_id
+                continue
+            
+            # Handle raw speaker IDs that might have escaped initial mapping
+            speaker_id_str = str(raw_id)
+            mapped_name = None
+            
+            # Try direct mapping first
+            if raw_id in SPEAKER_MAPPING:
+                mapped_name = SPEAKER_MAPPING[raw_id]
+            elif 'speaker_' in speaker_id_str:
+                # Extract speaker number from various formats
+                if 'SPEAKER_speaker_' in speaker_id_str:
+                    speaker_num_str = speaker_id_str.replace('SPEAKER_speaker_', '')
+                elif 'speaker_' in speaker_id_str:
+                    speaker_num_str = speaker_id_str.split('speaker_')[-1]
+                else:
+                    speaker_num_str = None
+                
+                if speaker_num_str:
+                    try:
+                        speaker_num = int(speaker_num_str)
+                        # Use the mapping from config.py
+                        mapped_key = f"speaker_{speaker_num}"
+                        mapped_name = SPEAKER_MAPPING.get(mapped_key, None)
+                    except ValueError:
+                        pass
+            
+            # If we found a mapping, use it; otherwise default to Mysteryshopper
+            id_to_label[raw_id] = mapped_name if mapped_name else 'Mysteryshopper'
 
-        # Any additional IDs inherit the previous label to avoid duplicates
-        mapped_labels = []
-        last_label = 'Mysteryshopper'
-        for raw_id in df['Speaker']:
-            lbl = id_to_label.get(raw_id)
-            if lbl is None:
-                lbl = last_label
-                id_to_label[raw_id] = lbl  # Persist for future occurrences
-            mapped_labels.append(lbl)
-            last_label = lbl
-
-        df['Speaker'] = mapped_labels
+        # Apply the mapping
+        df['Speaker'] = df['Speaker'].map(id_to_label)
         df.to_csv(csv_path, index=False)
         return True
     except Exception as e:
