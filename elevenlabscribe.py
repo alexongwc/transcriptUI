@@ -21,11 +21,29 @@ load_dotenv()
 
 # Configuration - use environment variable for API key
 API_KEY = os.getenv("XI_API_KEY")
-if not API_KEY:
-    print("❌ Error: XI_API_KEY environment variable is required!")
-    print("   Please set your ElevenLabs API key as an environment variable:")
-    print("   export XI_API_KEY='your_api_key_here'")
-    sys.exit(1)
+
+def check_api_key():
+    """Check if API key is available, only exit if running as main script"""
+    if not API_KEY:
+        error_msg = "❌ Error: XI_API_KEY environment variable is required!"
+        instructions = [
+            "   Please set your ElevenLabs API key as an environment variable:",
+            "   export XI_API_KEY='your_api_key_here'",
+            "   Or create a .env file with: XI_API_KEY=your_api_key_here"
+        ]
+        
+        if __name__ == "__main__":
+            print(error_msg)
+            for instruction in instructions:
+                print(instruction)
+            sys.exit(1)
+        else:
+            # If imported as module, just print warning but don't exit
+            print("⚠️  Warning: XI_API_KEY not found in environment variables")
+            return False
+    return True
+
+# API key will be checked when running as main script or when needed
 
 MAX_DURATION = 300  # 5 minutes in seconds for conversation chunks
 CONVERSATION_CHUNK_SIZE = 5  # Number of conversation turns per chunk
@@ -524,4 +542,13 @@ def process_mp3_with_ffmpeg_chunking(session):
 if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    process_single_audio_file()
+    
+    # Check API key when running as main script
+    if not check_api_key():
+        sys.exit(1)
+    
+    # Only run if AUDIO_FILE and OUTPUT_FOLDER are defined
+    if 'AUDIO_FILE' in globals() and 'OUTPUT_FOLDER' in globals():
+        process_single_audio_file()
+    else:
+        print("❌ AUDIO_FILE and OUTPUT_FOLDER must be defined to run this script directly")

@@ -21,7 +21,17 @@ try:
 except ImportError:
     DOCX_AVAILABLE = False
 
-from elevenlabscribe import format_timestamp
+# Define format_timestamp function locally to avoid circular import
+def format_timestamp(seconds):
+    """Format seconds to HH:MM:SS,mmm format"""
+    from datetime import timedelta
+    td = timedelta(seconds=float(seconds))
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds_ = total_seconds % 60
+    milliseconds = int((td.microseconds / 1000))
+    return f"{hours:02d}:{minutes:02d}:{seconds_:02d},{milliseconds:03d}"
 
 def get_api_key():
     """Get API key from Streamlit secrets or environment variables"""
