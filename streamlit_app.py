@@ -6,7 +6,24 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from config import SPEAKER_MAPPING
+
+# Try to import SPEAKER_MAPPING from config, with fallback
+try:
+    from config import SPEAKER_MAPPING
+except ImportError:
+    # Fallback speaker mapping if config.py is not found
+    SPEAKER_MAPPING = {
+        "speaker_0": "Mysteryshopper",
+        "speaker_1": "InsuranceAgent", 
+        "speaker_2": "Mysteryshopper",
+        "speaker_3": "InsuranceAgent",
+        "speaker_4": "Mysteryshopper",
+        "speaker_5": "InsuranceAgent",
+        "speaker_6": "Mysteryshopper",
+        "speaker_7": "InsuranceAgent",
+        "speaker_8": "Mysteryshopper",
+        "speaker_9": "InsuranceAgent",
+    }
 # Load environment variables from .env file (for local development)
 # For Streamlit Cloud, secrets are handled via st.secrets
 try:
@@ -69,6 +86,8 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
 
         # Prepend explicit vars to ensure they exist even if originals are commented out
         preface = (
+            f'import sys\n'
+            f'sys.path.insert(0, "{audioui_dir}")\n'
             f'AUDIO_FILE = "{abs_audio}"\n'
             f'OUTPUT_FOLDER = "{abs_out}"\n'
         )
@@ -125,6 +144,9 @@ def run_chunking(csv_file_path, output_folder):
         with open(script_path, 'r') as f:
             script_content = f.read()
         
+        # Add path insertion at the beginning
+        path_insertion = f'import sys\nsys.path.insert(0, "{audioui_dir}")\n'
+        
         # Replace the hardcoded paths with absolute paths
         modified_content = script_content.replace(
             'INPUT_CSV = "/home/alexong/intage/1476_JunKaiOng_GEFA_m2_merged.csv"',
@@ -139,6 +161,9 @@ def run_chunking(csv_file_path, output_folder):
             '/home/alexong/intage',
             f'{os.path.abspath(output_folder)}'
         )
+        
+        # Add the path insertion at the beginning
+        modified_content = path_insertion + modified_content
         
         # Write temporary script
         temp_script = os.path.join(output_folder, "temp_chunk.py")
