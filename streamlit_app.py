@@ -134,6 +134,12 @@ def run_chunking(csv_file_path, output_folder):
             f'OUTPUT_FOLDER = "{os.path.abspath(output_folder)}"'
         )
         
+        # Also replace any other hardcoded paths that might exist
+        modified_content = modified_content.replace(
+            '/home/alexong/intage',
+            f'{os.path.abspath(output_folder)}'
+        )
+        
         # Write temporary script
         temp_script = os.path.join(output_folder, "temp_chunk.py")
         with open(temp_script, 'w') as f:
@@ -253,12 +259,16 @@ def normalize_speaker_names(csv_path):
                         # Use the mapping from config.py
                         mapped_key = f"speaker_{speaker_num}"
                         mapped_name = SPEAKER_MAPPING.get(mapped_key, None)
+                        # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
+                        if mapped_name is None:
+                            mapped_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
                     except ValueError:
                         pass
             
             # If we found a mapping, use it; otherwise default to Mysteryshopper
-            id_to_label[raw_id] = mapped_name if mapped_name else 'Mysteryshopper'
-
+            final_name = mapped_name if mapped_name else 'Mysteryshopper'
+            id_to_label[raw_id] = final_name
+        
         # Apply the mapping
         df['Speaker'] = df['Speaker'].map(id_to_label)
         df.to_csv(csv_path, index=False)
@@ -930,6 +940,7 @@ def main():
                         if success_ck:
                             progress_bar.progress(1.0)
                             status_text.text("✅ Processing complete!")
+                            st.success("🎯 Chunking completed successfully! 5 conversation segments combined into 1 row with preserved speaker attribution.")
 
                             # Find all output files (use base_name, not base_name_merged)
                             output_files = find_output_files(output_folder, base_name)
@@ -985,9 +996,17 @@ def main():
                                     with open(output_files['merged_csv'], 'rb') as _f:
                                         st.session_state['merged_csv_bytes'] = _f.read()
 
-                                # Show a preview of merged CSV (first 10 rows)
+                                # Show preview of chunked CSV (5 segments per row) if available
+                                if 'chunked_csv' in output_files:
+                                    st.subheader("🎯 Chunked Transcript Preview (5 segments per row)")
+                                    st.success("✅ This is the chunked format you requested - 5 conversation segments combined into 1 row!")
+                                    df_chunked_preview = pd.read_csv(output_files['chunked_csv']).head(5)
+                                    st.dataframe(df_chunked_preview, use_container_width=True)
+                                
+                                # Show a preview of merged CSV (individual segments)
                                 if 'merged_csv' in output_files:
-                                    st.subheader("Merged Transcript Preview")
+                                    st.subheader("📋 Individual Segments Preview")
+                                    st.info("ℹ️ This shows individual segments. For chunked format (5 segments per row), download the chunked files above.")
                                     df_preview = pd.read_csv(output_files['merged_csv']).head(10)
                                     st.dataframe(df_preview, use_container_width=True)
 

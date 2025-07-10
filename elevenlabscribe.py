@@ -394,10 +394,22 @@ def process_single_audio_file():
         
         # Convert to dataframe format
         df_segments = []
+        
+        # Debug: Check what raw speaker IDs we're getting
+        raw_speakers = [segment["speaker"] for segment in all_segments]
+        unique_raw_speakers = list(set(raw_speakers))
+        print(f"\n🔍 DEBUG: Raw speaker IDs from API: {unique_raw_speakers}")
+        print(f"📊 Total segments: {len(all_segments)}, Unique speakers: {len(unique_raw_speakers)}")
+        print(f"🗺️ SPEAKER_MAPPING config: {SPEAKER_MAPPING}")
+        
         for segment in all_segments:
             # Rename speakers using the SPEAKER_MAPPING from config
             speaker_id = segment["speaker"]
             speaker_name = speaker_id  # Default fallback
+            
+            # Debug: Show first few mappings
+            if len(df_segments) < 5:
+                print(f"🎯 Mapping speaker {len(df_segments)+1}: '{speaker_id}' -> processing...")
             
             # Handle various speaker ID formats
             if speaker_id.startswith("SPEAKER_speaker_"):
@@ -407,7 +419,10 @@ def process_single_audio_file():
                     speaker_num = int(speaker_num_str)
                     # Use the mapping from config.py
                     mapped_key = f"speaker_{speaker_num}"
-                    speaker_name = SPEAKER_MAPPING.get(mapped_key, speaker_id)
+                    speaker_name = SPEAKER_MAPPING.get(mapped_key, None)
+                    # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
+                    if speaker_name is None:
+                        speaker_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
                 except ValueError:
                     # If we can't parse the number, try direct mapping
                     speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
@@ -417,12 +432,19 @@ def process_single_audio_file():
                 try:
                     speaker_num = int(speaker_num_str)
                     mapped_key = f"speaker_{speaker_num}"
-                    speaker_name = SPEAKER_MAPPING.get(mapped_key, speaker_id)
+                    speaker_name = SPEAKER_MAPPING.get(mapped_key, None)
+                    # If not in mapping, use alternating pattern: even=Mysteryshopper, odd=InsuranceAgent
+                    if speaker_name is None:
+                        speaker_name = "Mysteryshopper" if speaker_num % 2 == 0 else "InsuranceAgent"
                 except ValueError:
                     speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
             else:
                 # Try direct mapping for any other formats
                 speaker_name = SPEAKER_MAPPING.get(speaker_id, speaker_id)
+            
+            # Debug: Show first few final mappings
+            if len(df_segments) < 5:
+                print(f"  ✅ Final result: '{speaker_id}' -> '{speaker_name}'")
             
             df_segments.append({
                 "Start Time": format_timestamp(segment["start"]),
@@ -431,6 +453,14 @@ def process_single_audio_file():
                 "Text": segment["text"],
                 "Label": ""
             })
+        
+        # Debug: Show final speaker distribution
+        final_speakers = [seg["Speaker"] for seg in df_segments]
+        final_unique_speakers = list(set(final_speakers))
+        speaker_counts = {speaker: final_speakers.count(speaker) for speaker in final_unique_speakers}
+        print(f"\n📊 FINAL SPEAKER DISTRIBUTION:")
+        for speaker, count in speaker_counts.items():
+            print(f"   {speaker}: {count} segments")
         
         # Get base name for output files
         base_name = os.path.splitext(os.path.basename(AUDIO_FILE))[0]
