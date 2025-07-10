@@ -6,9 +6,13 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+# Load environment variables from .env file (for local development)
+# For Streamlit Cloud, secrets are handled via st.secrets
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available in Streamlit Cloud
 
 # Optional DOCX generation
 try:
@@ -18,6 +22,23 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 from elevenlabscribe import format_timestamp
+
+def get_api_key():
+    """Get API key from Streamlit secrets or environment variables"""
+    # Try Streamlit secrets first (for cloud deployment)
+    try:
+        if hasattr(st, 'secrets') and 'XI_API_KEY' in st.secrets:
+            return st.secrets['XI_API_KEY']
+    except:
+        pass
+    
+    # Fallback to environment variable (for local development)
+    api_key = os.getenv("XI_API_KEY")
+    if api_key:
+        return api_key
+    
+    # No API key found
+    return None
 
 def run_elevenlabs_transcription(audio_file_path, output_folder):
     """Run the elevenlabscribe.py script to process audio"""
@@ -57,7 +78,7 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         
         # Create environment for subprocess with API key
         env = os.environ.copy()
-        api_key = os.getenv("XI_API_KEY")
+        api_key = get_api_key()
         if api_key:
             env["XI_API_KEY"] = api_key
         
@@ -354,13 +375,10 @@ def run_fullfile_transcription(audio_file, output_dir):
     import requests, json
 
     model = "scribe_v1"
-    # Load environment variables to ensure API key is available
-    load_dotenv()
-    
-    # Get API key from environment
-    api_key = os.getenv("XI_API_KEY")
+    # Get API key from secrets or environment
+    api_key = get_api_key()
     if not api_key:
-        return False, "No API key available. Set XI_API_KEY env var in .env file."  # Early exit
+        return False, "No API key available. Set XI_API_KEY in Streamlit secrets or .env file."  # Early exit
     headers = {"xi-api-key": api_key}
     url = "https://api.elevenlabs.io/v1/speech-to-text"
 
@@ -759,6 +777,27 @@ def main():
     
     st.title("🎙️ Intage Audio Transcription")
     st.markdown("Upload an audio file to get transcription with speaker identification and conversation chunks")
+    
+    # Check API key availability
+    api_key = get_api_key()
+    if not api_key:
+        st.error("🔑 **API Key Required**")
+        st.markdown("""
+        To use this application, you need to provide your ElevenLabs API key:
+        
+        **For Streamlit Cloud:**
+        - Go to your app settings in Streamlit Cloud
+        - Add a secret: `XI_API_KEY = "your_api_key_here"`
+        
+        **For Local Development:**
+        - Create a `.env` file with: `XI_API_KEY=your_api_key_here`
+        - Or set environment variable: `export XI_API_KEY=your_api_key_here`
+        
+        [Get your ElevenLabs API key here](https://elevenlabs.io/app/speech-synthesis/speech-to-text)
+        """)
+        st.stop()
+    else:
+        st.success(f"✅ API Key loaded (ends with: ...{api_key[-4:]})")
 
     # Show existing results if present
     if 'zip_data' in st.session_state and 'output_files' in st.session_state:
