@@ -32,7 +32,6 @@ temp_output/
 chunks/
 *.csv
 *.xlsx
-*.txt
 *.mp3
 *.wav
 *.m4a
