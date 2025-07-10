@@ -196,7 +196,8 @@ def transcribe_audio(audio_path, session, start_time=0):
                 "diarize": True,
                 "tag_audio_events": True,
                 "timestamps_granularity": "word",
-                "output_format": "json"
+                "output_format": "json",
+                "enable_logging": False  # Zero Retention Mode – do not retain request/response data
             }
             
             print("\nSending audio to ElevenLabs API...")
