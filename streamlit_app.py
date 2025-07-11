@@ -7,6 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Global switch: turn conversation chunking on/off
+ENABLE_CHUNKING = False  # Set to True to create _chunked.csv and other chunk files
+
 # No config import needed for the reverted approach
 # Load environment variables from .env file (for local development)
 # For Streamlit Cloud, secrets are handled via st.secrets
@@ -224,53 +227,16 @@ def find_output_files(output_folder, base_name):
 # -------------------------------------------------------------
 
 def normalize_speaker_names(csv_path):
-    """Map speaker IDs to Mysteryshopper/InsuranceAgent based on speaker number patterns.
-    Even-numbered speakers (0, 2, 4, 6...) ➜ Mysteryshopper
-    Odd-numbered speakers (1, 3, 5, 7...) ➜ InsuranceAgent
-    First speaker (speaker_0) always maps to Mysteryshopper as per project requirements."""
+    """Simple speaker mapping: alternating between Mysteryshopper and InsuranceAgent.
+    Row 0: Mysteryshopper, Row 1: InsuranceAgent, Row 2: Mysteryshopper, etc."""
     try:
         df = pd.read_csv(csv_path)
-
-        # Build mapping based on speaker patterns
-        id_to_label = {}
         
-        for raw_id in df['Speaker'].unique():
-            # Handle already mapped speakers (from elevenlabscribe.py)
-            if raw_id in ['Mysteryshopper', 'InsuranceAgent']:
-                id_to_label[raw_id] = raw_id
-                continue
-            
-            # Handle raw speaker IDs that might have escaped initial mapping
-            if 'speaker_' in str(raw_id):
-                # Extract speaker number from various formats
-                speaker_id_str = str(raw_id)
-                
-                # Handle formats like "SPEAKER_speaker_4" or "speaker_4"
-                if 'SPEAKER_speaker_' in speaker_id_str:
-                    speaker_num_str = speaker_id_str.replace('SPEAKER_speaker_', '')
-                elif 'speaker_' in speaker_id_str:
-                    speaker_num_str = speaker_id_str.split('speaker_')[-1]
-                else:
-                    # Fallback: treat as unknown
-                    id_to_label[raw_id] = 'Mysteryshopper'
-                    continue
-                
-                try:
-                    speaker_num = int(speaker_num_str)
-                    # Map even-numbered speakers (0, 2, 4, 6...) to Mysteryshopper
-                    # Map odd-numbered speakers (1, 3, 5, 7...) to InsuranceAgent
-                    # This ensures speaker_0 is always Mysteryshopper per project requirements
-                    id_to_label[raw_id] = 'Mysteryshopper' if speaker_num % 2 == 0 else 'InsuranceAgent'
-                except ValueError:
-                    # If we can't parse the number, default to Mysteryshopper
-                    id_to_label[raw_id] = 'Mysteryshopper'
-            else:
-                # Unknown format, default to Mysteryshopper
-                id_to_label[raw_id] = 'Mysteryshopper'
-
-        # Apply the mapping
-        df['Speaker'] = df['Speaker'].map(id_to_label)
+        # Simple alternating pattern: even rows = Mysteryshopper, odd rows = InsuranceAgent
+        df['Speaker'] = df.index.map(lambda i: 'Mysteryshopper' if i % 2 == 0 else 'InsuranceAgent')
+        
         df.to_csv(csv_path, index=False)
+        print(f"Applied simple alternating speaker mapping: {len(df)} segments")
         return True
     except Exception as e:
         print(f"Speaker normalization failed for {csv_path}: {e}")
@@ -934,99 +900,100 @@ def main():
                         status_text.text("Creating conversation chunks...")
                         progress_bar.progress(0.8)
                         
-                        # Step 3: Run chunking
-                        success_ck, ck_logs = run_chunking(merged_csv_path, output_folder)
-                        if success_ck:
+                        # Step 3: Run chunking (optional)
+                        output_files = {}
+                        if ENABLE_CHUNKING:
+                            success_ck, ck_logs = run_chunking(merged_csv_path, output_folder)
+                            if success_ck:
+                                progress_bar.progress(1.0)
+                                status_text.text("✅ Processing complete!")
+                                output_files = find_output_files(output_folder, base_name)
+                        else:
+                            # No chunking – just use merged CSV as the only output
+                            success_ck, ck_logs = True, ""  # pretend success so no error banner
                             progress_bar.progress(1.0)
-                            status_text.text("✅ Processing complete!")
+                            status_text.text("✅ Processing complete! (chunking disabled)")
+                            output_files['merged_csv'] = merged_csv_path
 
-                            # Find all output files (use base_name, not base_name_merged)
-                            output_files = find_output_files(output_folder, base_name)
+                        # Display results and provide download
+                        if output_files:
+                            st.success("🎉 Processing completed successfully!")
 
-                            # Check for 90+ second long chunks in chunked CSV
-                            if 'chunked_csv' in output_files:
+                            # Create a single ZIP with all output files
+                            import zipfile, io
+                            zip_buffer = io.BytesIO()
+                            with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                                for file_type, file_path in output_files.items():
+                                    zf.write(file_path, os.path.basename(file_path))
+                            zip_buffer.seek(0)
+
+                            st.download_button(
+                                label="⬇️ Download All Results (ZIP)",
+                                data=zip_buffer.getvalue(),
+                                file_name=f"{base_name}_results.zip",
+                                mime="application/zip",
+                                type="primary",
+                                key="main_download_button"
+                            )
+
+                            # Cache results in session_state so they persist on rerun
+                            st.session_state['zip_data'] = zip_buffer.getvalue()
+                            st.session_state['output_files'] = output_files
+                            st.session_state['base_name'] = base_name
+                            # store preview bytes
+                            if 'merged_csv' in output_files:
+                                with open(output_files['merged_csv'], 'rb') as _f:
+                                    st.session_state['merged_csv_bytes'] = _f.read()
+
+                            # Optional checks only if chunking is enabled and produced CSV
+                            if ENABLE_CHUNKING and 'chunked_csv' in output_files:
+                                # Check for long gaps
                                 st.info("🔍 Checking for 90+ second long chunks in transcript...")
                                 chunk_count, long_chunks_found, gap_log_messages = detect_90s_gaps_in_chunked_csv(output_files['chunked_csv'])
-                                
                                 if chunk_count > 0:
                                     st.warning(f"⏳ Found {chunk_count} chunk(s) longer than 90 seconds (may contain missing transcription)")
                                     with st.expander("🔍 View long chunks"):
                                         chunk_df = pd.DataFrame(long_chunks_found)
                                         st.dataframe(chunk_df[['chunk_number', 'start_time', 'end_time', 'duration']], use_container_width=True)
-                                else:
-                                    st.success("✅ No chunks longer than 90 seconds found")
 
-                            # Generate DOCX if chunked CSV exists
-                            if 'chunked_csv' in output_files:
+                                # Generate DOCX
                                 docx_path = os.path.join(output_folder, f"{base_name}_chunked.docx")
                                 success_docx, msg_docx = generate_docx_from_chunked_csv(output_files['chunked_csv'], docx_path)
                                 if success_docx:
                                     output_files['chunked_docx'] = docx_path
-                                else:
-                                    st.warning(f"DOCX not generated: {msg_docx}")
-
-                            if output_files:
-                                st.success("🎉 Processing completed successfully!")
-
-                                # Create a single ZIP with all output files
-                                import zipfile, io
-                                zip_buffer = io.BytesIO()
-                                with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                                    for file_type, file_path in output_files.items():
-                                        zf.write(file_path, os.path.basename(file_path))
-                                zip_buffer.seek(0)
-
-                                st.download_button(
-                                    label="⬇️ Download All Results (ZIP)",
-                                    data=zip_buffer.getvalue(),
-                                    file_name=f"{base_name}_results.zip",
-                                    mime="application/zip",
-                                    type="primary",
-                                    key="main_download_button"
-                                )
-
-                                # Cache results in session_state so they persist on rerun
-                                st.session_state['zip_data'] = zip_buffer.getvalue()
-                                st.session_state['output_files'] = output_files
-                                st.session_state['base_name'] = base_name
-                                # store preview bytes
-                                if 'merged_csv' in output_files:
-                                    with open(output_files['merged_csv'], 'rb') as _f:
-                                        st.session_state['merged_csv_bytes'] = _f.read()
 
                                 # Show preview of chunked CSV (5 segments per row) if available
-                                if 'chunked_csv' in output_files:
-                                    st.subheader("🎯 Chunked Transcript Preview (5 segments per row)")
-                                    st.success("✅ This is the chunked format you requested - 5 conversation segments combined into 1 row!")
-                                    df_chunked_preview = pd.read_csv(output_files['chunked_csv']).head(5)
-                                    st.dataframe(df_chunked_preview, use_container_width=True)
-                                
-                                # Show a preview of merged CSV (individual segments)
-                                if 'merged_csv' in output_files:
-                                    st.subheader("📋 Individual Segments Preview")
-                                    st.info("ℹ️ This shows individual segments. For chunked format (5 segments per row), download the chunked files above.")
-                                    df_preview = pd.read_csv(output_files['merged_csv']).head(10)
-                                    st.dataframe(df_preview, use_container_width=True)
+                                st.subheader("🎯 Chunked Transcript Preview (5 segments per row)")
+                                st.success("✅ This is the chunked format you requested - 5 conversation segments combined into 1 row!")
+                                df_chunked_preview = pd.read_csv(output_files['chunked_csv']).head(5)
+                                st.dataframe(df_chunked_preview, use_container_width=True)
+                            
+                            # Show a preview of merged CSV (individual segments)
+                            if 'merged_csv' in output_files:
+                                st.subheader("📋 Individual Segments Preview")
+                                if ENABLE_CHUNKING:
+                                    st.info("ℹ️ This shows individual segments. For chunked format (5 segments per row), see above.")
+                                else:
+                                    st.info("ℹ️ This shows individual segments. Chunking is currently disabled.")
+                                df_preview = pd.read_csv(output_files['merged_csv']).head(10)
+                                st.dataframe(df_preview, use_container_width=True)
 
-                                # Show logs in expander
-                                with st.expander("🔍 View Processing Logs"):
-                                    st.subheader("Transcription Logs")
-                                    st.text(tx_logs)
+                            # Show logs in expander
+                            with st.expander("🔍 View Processing Logs"):
+                                st.subheader("Transcription Logs")
+                                st.text(tx_logs)
+                                if ENABLE_CHUNKING:
                                     st.subheader("Chunking Logs")
                                     st.text(ck_logs)
-                                    if 'gap_log_messages' in locals() and gap_log_messages:
-                                        st.subheader("Gap Detection Logs")
-                                        st.text("\n".join(gap_log_messages))
-                            else:
-                                st.error("❌ No output files found")
-                                # Debug: Show what files are in the output folder
-                                st.write("Files in output folder:")
-                                for file in os.listdir(output_folder):
-                                    st.write(f"- {file}")
+                                if 'gap_log_messages' in locals() and gap_log_messages:
+                                    st.subheader("Gap Detection Logs")
+                                    st.text("\n".join(gap_log_messages))
                         else:
-                            st.error("❌ Chunking failed")
-                            with st.expander("🔍 Transcription Logs"):
-                                st.text(tx_logs)
+                            st.error("❌ No output files found")
+                            # Debug: Show what files are in the output folder
+                            st.write("Files in output folder:")
+                            for file in os.listdir(output_folder):
+                                st.write(f"- {file}")
                     else:
                         st.error("❌ Merged CSV file not found after transcription")
                         # Debug: Show what files are in the output folder

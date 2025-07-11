@@ -399,19 +399,18 @@ def process_single_audio_file():
             speaker_id = segment["speaker"]  # e.g. "0", "1", "speaker_0", "SPEAKER_1", "SPEAKER_speaker_2"
 
             speaker_num = None
-            if isinstance(speaker_id, str):
+            # Handle integer IDs directly
+            if isinstance(speaker_id, (int, float)) and str(speaker_id).isdigit():
+                speaker_num = int(speaker_id)
+            elif isinstance(speaker_id, str):
                 if speaker_id.isdigit():
-                    # Plain number as string ("0", "1", ...)
                     speaker_num = int(speaker_id)
                 elif "speaker_" in speaker_id.lower():
-                    # Handle patterns containing "speaker_" (case-insensitive)
-                    # Split on the last underscore and take the suffix digits
                     try:
                         speaker_num = int(speaker_id.split("_")[-1])
                     except ValueError:
                         speaker_num = None
                 elif speaker_id.upper().startswith("SPEAKER_"):
-                    # Pattern like "SPEAKER_0", "SPEAKER_1"
                     try:
                         speaker_num = int(speaker_id.split("_")[-1])
                     except ValueError:
