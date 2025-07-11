@@ -667,6 +667,72 @@ def flag_long_gaps(csv_path, gap_seconds: int = 60):
 # Helper: detect and flag 90+ second gaps in chunked CSV
 # -------------------------------------------------------------
 
+def detect_large_gaps_in_transcript(csv_path, min_gap_seconds=90):
+    """Detect gaps longer than min_gap_seconds in the transcript that may indicate missing transcription"""
+    try:
+        df = pd.read_csv(csv_path)
+        
+        def to_seconds(timestamp_str):
+            """Convert HH:MM:SS,mmm to seconds"""
+            try:
+                time_part, ms_part = timestamp_str.split(',')
+                h, m, s = map(int, time_part.split(':'))
+                ms = int(ms_part)
+                return h * 3600 + m * 60 + s + ms / 1000
+            except:
+                return 0
+        
+        large_gaps = []
+        
+        for i in range(len(df) - 1):
+            current_end = to_seconds(df.iloc[i]['End Time'])
+            next_start = to_seconds(df.iloc[i + 1]['Start Time'])
+            gap_duration = next_start - current_end
+            
+            if gap_duration >= min_gap_seconds:
+                large_gaps.append({
+                    'Gap Number': len(large_gaps) + 1,
+                    'After Segment': i + 1,
+                    'Gap Start': df.iloc[i]['End Time'],
+                    'Gap End': df.iloc[i + 1]['Start Time'],
+                    'Duration': format_duration(gap_duration),
+                    'duration_seconds': gap_duration,
+                    'Previous Text': df.iloc[i]['Text'][:50] + "..." if len(df.iloc[i]['Text']) > 50 else df.iloc[i]['Text'],
+                    'Next Text': df.iloc[i + 1]['Text'][:50] + "..." if len(df.iloc[i + 1]['Text']) > 50 else df.iloc[i + 1]['Text']
+                })
+        
+        return {
+            'gaps_found': len(large_gaps) > 0,
+            'large_gaps': large_gaps,
+            'total_gaps': len(large_gaps)
+        }
+    except Exception as e:
+        return {
+            'gaps_found': False,
+            'large_gaps': [],
+            'total_gaps': 0,
+            'error': str(e)
+        }
+
+def format_duration(seconds):
+    """Format seconds into readable duration (e.g., '2m 30s' or '1h 15m 30s')"""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m {secs}s" if secs > 0 else f"{minutes}m"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        if secs > 0:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes > 0:
+            return f"{hours}h {minutes}m"
+        else:
+            return f"{hours}h"
+
 def detect_90s_gaps_in_chunked_csv(csv_path):
     """
     Detect chunks longer than 90 seconds in the chunked CSV file, which may indicate
@@ -879,24 +945,42 @@ def main():
                         validate_language_and_mark(merged_csv_path)
                         gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
 
-                        # --- NEW: summarize flagged (gibberish) segments ---
+                        # --- Gap Detection & Quality Analysis ---
+                        st.subheader("🔍 Transcript Quality Analysis")
                         try:
                             _df_flag = pd.read_csv(merged_csv_path)
                             _label_col = 'Label' if 'Label' in _df_flag.columns else ('Notes' if 'Notes' in _df_flag.columns else None)
                             if _label_col:
+                                # Language/gibberish flags
                                 _flagged = _df_flag[_df_flag[_label_col].str.contains('require human transcription', na=False)]
                                 if not _flagged.empty:
                                     st.warning(f"⚠️ {_flagged.shape[0]} segment(s) were flagged as requiring human transcription due to gibberish or unsupported language.")
                                     with st.expander("🔍 View flagged segments"):
                                         st.dataframe(_flagged.head(20), use_container_width=True)
-                                # long-gap flag summary
+                                
+                                # 60s+ silence gaps
                                 _gaps = _df_flag[_df_flag[_label_col].str.contains('>60s silence', na=False)]
                                 if gap_count:
                                     st.warning(f"⏳ Detected {gap_count} segment(s) flagged as '>60s silence, missing audio segment'.")
                                     with st.expander("🔍 View long-gap segments"):
                                         st.dataframe(_gaps[['Start Time','End Time','Speaker','Text',_label_col]].head(20), use_container_width=True)
+                                
+                                # 120s+ single segments (possible missing transcription)
+                                _long_segments = _df_flag[_df_flag[_label_col].str.contains('>120s single segment', na=False)]
+                                if not _long_segments.empty:
+                                    st.error(f"🚨 Found {_long_segments.shape[0]} segment(s) longer than 120 seconds - possible missing transcription!")
+                                    with st.expander("🔍 View long segments"):
+                                        st.dataframe(_long_segments[['Start Time','End Time','Speaker','Text',_label_col]].head(20), use_container_width=True)
+                                
+                                # Summary
+                                total_issues = len(_flagged) + gap_count + len(_long_segments)
+                                if total_issues == 0:
+                                    st.success("✅ No quality issues detected - transcript appears complete and accurate!")
+                                else:
+                                    st.info(f"📊 Quality Summary: {total_issues} total issues detected across {len(_df_flag)} segments")
+                                    
                         except Exception as _e:
-                            st.info(f"Language-validation summary unavailable: {_e}")
+                            st.info(f"Quality analysis unavailable: {_e}")
                         status_text.text("Creating conversation chunks...")
                         progress_bar.progress(0.8)
                         
@@ -968,15 +1052,7 @@ def main():
                                 df_chunked_preview = pd.read_csv(output_files['chunked_csv']).head(5)
                                 st.dataframe(df_chunked_preview, use_container_width=True)
                             
-                            # Show a preview of merged CSV (individual segments)
-                            if 'merged_csv' in output_files:
-                                st.subheader("📋 Individual Segments Preview")
-                                if ENABLE_CHUNKING:
-                                    st.info("ℹ️ This shows individual segments. For chunked format (5 segments per row), see above.")
-                                else:
-                                    st.info("ℹ️ This shows individual segments. Chunking is currently disabled.")
-                                df_preview = pd.read_csv(output_files['merged_csv']).head(10)
-                                st.dataframe(df_preview, use_container_width=True)
+
 
                             # Show logs in expander
                             with st.expander("🔍 View Processing Logs"):
