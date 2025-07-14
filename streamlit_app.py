@@ -910,7 +910,7 @@ def main():
             method = st.selectbox(
                 "Processing method:",
                 (
-                    "Transcribe whole file (send whole file to Elevenlabs)",
+                    "Transcribe whole file",
                 )
             )
 
