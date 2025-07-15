@@ -578,6 +578,42 @@ def run_fullfile_transcription(audio_file, output_dir):
         
     return True, log
 
+def create_transcript_with_quality_excel(merged_csv_path, quality_results, label_col, output_folder, base_name):
+    """Create Excel file with merged transcript and quality analysis logs as separate sheets."""
+    import pandas as pd
+    import os
+    excel_path = os.path.join(output_folder, f"{base_name}_with_quality.xlsx")
+    merged_df = pd.read_csv(merged_csv_path)
+    
+    # Prepare DataFrames for logs
+    flagged_df = pd.DataFrame(quality_results['flagged_segments'])
+    long_df = pd.DataFrame(quality_results['long_segments'])
+    gap_df = pd.DataFrame(quality_results['gap_segments'])
+
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+        # Sheet 1: Full transcript
+        merged_df.to_excel(writer, sheet_name='Transcript', index=False)
+        # Sheet 2: Quality Analysis Logs
+        startrow = 0
+        # Flagged segments
+        if not flagged_df.empty:
+            flagged_df[["Start Time", "End Time", "Speaker", "Text", label_col]].to_excel(
+                writer, sheet_name='Quality_Logs', index=False, startrow=startrow
+            )
+            startrow += len(flagged_df) + 2  # +2 for header and one blank row
+        # Long segments
+        if not long_df.empty:
+            long_df[["Start Time", "End Time", "Speaker", "Text", label_col]].to_excel(
+                writer, sheet_name='Quality_Logs', index=False, startrow=startrow
+            )
+            startrow += len(long_df) + 2
+        # Gap segments
+        if not gap_df.empty:
+            gap_df[["Start Time", "End Time", "Speaker", "Text", label_col]].to_excel(
+                writer, sheet_name='Quality_Logs', index=False, startrow=startrow
+            )
+    return excel_path
+
 def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, progress_bar, status_text):
     """Process a large audio file with progress tracking"""
     try:
@@ -664,29 +700,31 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                 # Create output files dictionary
                 output_files = {'merged_csv': merged_csv_path}
                 
+                excel_with_quality = create_transcript_with_quality_excel(merged_csv_path, quality_results, label_col, output_folder, base_name)
+                output_files['excel_with_quality'] = excel_with_quality
+
                 st.success("🎉 Processing completed successfully!")
 
                 # Create ZIP file
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                    for file_type, file_path in output_files.items():
-                        zf.write(file_path, os.path.basename(file_path))
+                    # Only add the new Excel file
+                    zf.write(excel_with_quality, os.path.basename(excel_with_quality))
                 zip_buffer.seek(0)
 
                 # Store results in session state
                 st.session_state['zip_data'] = zip_buffer.getvalue()
                 st.session_state['output_files'] = output_files
-                
                 # Store preview data
-                if 'merged_csv' in output_files:
-                    with open(output_files['merged_csv'], 'rb') as f:
-                        st.session_state['merged_csv_bytes'] = f.read()
-                
+                if 'excel_with_quality' in output_files:
+                    with open(output_files['excel_with_quality'], 'rb') as f:
+                        st.session_state['excel_with_quality_bytes'] = f.read()
+
                 # Download button
                 st.download_button(
-                    label="⬇️ Download All Results (ZIP)",
+                    label="⬇️ Download Transcript + Quality Logs (Excel in ZIP)",
                     data=zip_buffer.getvalue(),
-                    file_name=f"{base_name}_results.zip",
+                    file_name=f"{base_name}_transcript_quality.zip",
                     mime="application/zip",
                     type="primary",
                     key="download_button"
