@@ -6,6 +6,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+import zipfile
+import io
+import traceback
+from datetime import datetime
 
 # Global switch: turn conversation chunking on/off
 ENABLE_CHUNKING = False  # Set to True to create _chunked.csv and other chunk files
@@ -18,6 +22,102 @@ try:
     load_dotenv()
 except ImportError:
     pass  # dotenv not available in Streamlit Cloud
+
+# Initialize session state for logging
+def init_logging():
+    """Initialize logging containers in session state"""
+    if 'process_logs' not in st.session_state:
+        st.session_state.process_logs = []
+    if 'error_logs' not in st.session_state:
+        st.session_state.error_logs = []
+    if 'log_container' not in st.session_state:
+        st.session_state.log_container = None
+    if 'tx_logs' not in st.session_state:
+        st.session_state.tx_logs = ""
+    if 'ck_logs' not in st.session_state:
+        st.session_state.ck_logs = ""
+    if 'gap_log_messages' not in st.session_state:
+        st.session_state.gap_log_messages = []
+
+def add_log(message, log_type="INFO"):
+    """Add a log message to the session state"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] [{log_type}] {message}"
+    
+    # Add to appropriate log collection
+    if not hasattr(st.session_state, 'process_logs'):
+        st.session_state.process_logs = []
+    if not hasattr(st.session_state, 'error_logs'):
+        st.session_state.error_logs = []
+        
+    st.session_state.process_logs.append(log_entry)
+    if log_type in ["ERROR", "WARNING"]:
+        st.session_state.error_logs.append(log_entry)
+
+def display_logs():
+    """Display all logs from session state in the original format"""
+    # Transcription Logs
+    if hasattr(st.session_state, 'tx_logs') and st.session_state.tx_logs:
+        with st.expander("🔍 Transcription Logs", expanded=True):
+            # Parse and display the JSON response in a readable format
+            try:
+                # Try to extract the actual log content if it's in JSON format
+                if isinstance(st.session_state.tx_logs, str) and st.session_state.tx_logs.strip().startswith('{'):
+                    import json
+                    log_data = json.loads(st.session_state.tx_logs)
+                    if isinstance(log_data, dict):
+                        for key, value in log_data.items():
+                            st.write(f"{key}: {value}")
+                else:
+                    # Display as regular text if not JSON
+                    st.text_area("Status", value=st.session_state.tx_logs, height=150, disabled=True, key="tx_logs_display")
+            except:
+                # Fallback to raw text display if JSON parsing fails
+                st.text_area("Status", value=st.session_state.tx_logs, height=150, disabled=True, key="tx_logs_fallback")
+
+    # Gap Detection Logs
+    if hasattr(st.session_state, 'gap_log_messages') and st.session_state.gap_log_messages:
+        with st.expander("⏱️ Gap Detection Logs", expanded=True):
+            if isinstance(st.session_state.gap_log_messages, list):
+                for message in st.session_state.gap_log_messages:
+                    st.write(message)
+            else:
+                st.write(st.session_state.gap_log_messages)
+
+    # Error Logs
+    if hasattr(st.session_state, 'error_logs') and st.session_state.error_logs:
+        with st.expander("⚠️ Error Logs", expanded=True):
+            for error in st.session_state.error_logs:
+                st.error(error)
+
+    # Process Logs (if any additional logs exist)
+    if hasattr(st.session_state, 'process_logs') and st.session_state.process_logs:
+        with st.expander("📋 Process Logs", expanded=True):
+            st.text_area(
+                "Processing History",
+                value="\n".join(st.session_state.process_logs),
+                height=200,
+                disabled=True,
+                key="process_logs_display"
+            )
+
+def create_logs_excel(output_folder, base_name, process_logs, error_logs):
+    """Create Excel file with separate tabs for process and error logs"""
+    try:
+        # Create DataFrames for logs
+        process_df = pd.DataFrame({'Log_Entry': process_logs})
+        error_df = pd.DataFrame({'Error_Log_Entry': error_logs})
+        
+        # Create Excel file with multiple sheets
+        excel_path = os.path.join(output_folder, f"{base_name}_logs.xlsx")
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            process_df.to_excel(writer, sheet_name='Process_Logs', index=False)
+            error_df.to_excel(writer, sheet_name='Error_Logs', index=False)
+        
+        return excel_path
+    except Exception as e:
+        add_log(f"Failed to create logs Excel: {str(e)}", "ERROR")
+        return None
 
 # Optional DOCX generation
 try:
@@ -58,9 +158,13 @@ def get_api_key():
 def run_elevenlabs_transcription(audio_file_path, output_folder):
     """Run the elevenlabscribe.py script to process audio"""
     try:
+        add_log("Starting ElevenLabs transcription process")
+        
         # Get the absolute path to the audioUI directory
         audioui_dir = os.path.dirname(os.path.abspath(__file__))
         script_path = os.path.join(audioui_dir, "elevenlabscribe.py")
+        
+        add_log(f"Using script path: {script_path}")
         
         # Create a temporary modified version of elevenlabscribe.py
         with open(script_path, 'r') as f:
@@ -70,6 +174,9 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         # Build path strings
         abs_audio = os.path.abspath(audio_file_path)
         abs_out   = os.path.abspath(output_folder)
+
+        add_log(f"Processing audio file: {abs_audio}")
+        add_log(f"Output folder: {abs_out}")
 
         # Prepend explicit vars to ensure they exist even if originals are commented out
         preface = (
@@ -91,6 +198,8 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         with open(temp_script, 'w') as f:
             f.write(modified_content)
         
+        add_log("Created temporary script, executing transcription...")
+        
         # Create environment for subprocess with API key
         env = os.environ.copy()
         api_key = get_api_key()
@@ -105,25 +214,36 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         os.remove(temp_script)
         
         log_text = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+        
         if result.returncode == 0:
+            add_log("✅ Transcription completed successfully!")
             st.success("✅ Transcription completed successfully!")
             return True, log_text
         else:
+            add_log("❌ Transcription failed", "ERROR")
+            add_log(f"Error details: {log_text}", "ERROR")
             st.error("❌ Transcription failed")
             return False, log_text
             
     except Exception as e:
-        st.error(f"❌ Error running transcription: {str(e)}")
-        import traceback
+        error_msg = f"❌ Error running transcription: {str(e)}"
+        add_log(error_msg, "ERROR")
+        add_log(f"Traceback: {traceback.format_exc()}", "ERROR")
+        st.error(error_msg)
         st.error(f"Traceback: {traceback.format_exc()}")
         return False, f"Exception: {str(e)}"
 
 def run_chunking(csv_file_path, output_folder):
     """Run the chunk.py script to create conversation chunks"""
     try:
+        add_log("Starting chunking process")
+        
         # Get the absolute path to the audioUI directory
         audioui_dir = os.path.dirname(os.path.abspath(__file__))
         script_path = os.path.join(audioui_dir, "chunk.py")
+        
+        add_log(f"Using chunking script: {script_path}")
+        add_log(f"Input CSV: {csv_file_path}")
         
         # Create a temporary modified version of chunk.py
         with open(script_path, 'r') as f:
@@ -149,6 +269,8 @@ def run_chunking(csv_file_path, output_folder):
         with open(temp_script, 'w') as f:
             f.write(modified_content)
         
+        add_log("Created temporary chunking script, executing...")
+        
         # Run the script from the audioUI directory
         result = subprocess.run([sys.executable, temp_script], 
                               capture_output=True, text=True, cwd=audioui_dir)
@@ -158,15 +280,20 @@ def run_chunking(csv_file_path, output_folder):
         
         log_text = f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
         if result.returncode == 0:
+            add_log("✅ Chunking completed successfully!")
             st.success("✅ Chunking completed successfully!")
             return True, log_text
         else:
+            add_log("❌ Chunking failed", "ERROR")
+            add_log(f"Chunking error details: {log_text}", "ERROR")
             st.error("❌ Chunking failed")
             return False, log_text
             
     except Exception as e:
-        st.error(f"❌ Error running chunking: {str(e)}")
-        import traceback
+        error_msg = f"❌ Error running chunking: {str(e)}"
+        add_log(error_msg, "ERROR")
+        add_log(f"Chunking traceback: {traceback.format_exc()}", "ERROR")
+        st.error(error_msg)
         st.error(f"Traceback: {traceback.format_exc()}")
         return False, f"Exception: {str(e)}"
 
@@ -452,150 +579,144 @@ def run_fullfile_transcription(audio_file, output_dir):
     return True, log
 
 def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, progress_bar, status_text):
-    """
-    Processes a large audio file by chunking it and then running transcription and chunking.
-    This function is called when the uploaded file exceeds the 200MB limit.
-    """
-    st.warning(f"Processing large audio file ({len(uploaded_file.getvalue()) / (1024*1024):.1f} MB) in chunks.")
-    progress_bar.progress(0.05)
-    status_text.text("Saving uploaded file...")
-    base_name = os.path.splitext(uploaded_file.name)[0]
-    # The file is already saved by the caller (audio_file_path)
-    # Create output directory in audioUI
-    audioui_dir = os.path.dirname(os.path.abspath(__file__))
-    output_folder = os.path.join(audioui_dir, "temp_output")
-    os.makedirs(output_folder, exist_ok=True)
-    status_text.text("Running transcription on chunks/whole file...")
-    progress_bar.progress(0.2)
-    # Step 1: Run full file transcription (to get initial segments)
-    success_tx, tx_logs = run_fullfile_transcription(audio_file_path, output_folder)
-    if success_tx:
-        progress_bar.progress(0.5)
-        status_text.text("Transcription finished – post-processing...")
-        # Step 2: Find the merged CSV file (full-file path always produces _full_merged.csv)
-        merged_csv_path = os.path.join(output_folder, f"{base_name}_full_merged.csv")
+    """Process a large audio file with progress tracking"""
+    try:
+        base_name = os.path.splitext(uploaded_file.name)[0]
         
-        if os.path.exists(merged_csv_path):
-            # Normalize speaker names so first speaker is Mysteryshopper
-            normalize_speaker_names(merged_csv_path)
-            validate_language_and_mark(merged_csv_path)
-            gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
+        # Store base_name in session state
+        st.session_state['base_name'] = base_name
+        
+        status_text.text("Running transcription...")
+        progress_bar.progress(0.1)
 
-            # --- NEW: summarize flagged (gibberish) segments ---
-            try:
-                _df_flag = pd.read_csv(merged_csv_path)
-                _label_col = 'Label' if 'Label' in _df_flag.columns else ('Notes' if 'Notes' in _df_flag.columns else None)
-                if _label_col:
-                    _flagged = _df_flag[_df_flag[_label_col].str.contains('require human transcription', na=False)]
-                    if not _flagged.empty:
-                        st.warning(f"⚠️ {_flagged.shape[0]} segment(s) were flagged as requiring human transcription due to gibberish or unsupported language.")
-                        with st.expander("🔍 View flagged segments"):
-                            st.dataframe(_flagged.head(20), use_container_width=True)
-                    # long-gap flag summary
-                    _gaps = _df_flag[_df_flag[_label_col].str.contains('>60s silence', na=False)]
-                    if gap_count:
-                        st.warning(f"⏳ Detected {gap_count} segment(s) flagged as '>60s silence, missing audio segment'.")
-                        with st.expander("🔍 View long-gap segments"):
-                            st.dataframe(_gaps[['Start Time','End Time','Speaker','Text',_label_col]].head(20), use_container_width=True)
-            except Exception as _e:
-                st.info(f"Language-validation summary unavailable: {_e}")
-            progress_bar.progress(0.6)
-            status_text.text("Creating conversation chunks...")
-            # Step 3: Run chunking
-            success_ck, ck_logs = run_chunking(merged_csv_path, output_folder)
-            if success_ck:
-                st.success("✅ Processing complete!")
-                progress_bar.progress(1.0)
-                # Find all output files (use base_name, not base_name_merged)
-                output_files = find_output_files(output_folder, base_name)
-
-                # Check for 90+ second long chunks in chunked CSV
-                if 'chunked_csv' in output_files:
-                    st.info("🔍 Checking for 90+ second long chunks in transcript...")
-                    chunk_count, long_chunks_found, gap_log_messages = detect_90s_gaps_in_chunked_csv(output_files['chunked_csv'])
-                    
-                    if chunk_count > 0:
-                        st.warning(f"⏳ Found {chunk_count} chunk(s) longer than 90 seconds (may contain missing transcription)")
-                        with st.expander("🔍 View long chunks"):
-                            chunk_df = pd.DataFrame(long_chunks_found)
-                            st.dataframe(chunk_df[['chunk_number', 'start_time', 'end_time', 'duration']], use_container_width=True)
-                    else:
-                        st.success("✅ No chunks longer than 90 seconds found")
-
-                # Generate DOCX if chunked CSV exists
-                if 'chunked_csv' in output_files:
-                    docx_path = os.path.join(output_folder, f"{base_name}_chunked.docx")
-                    success_docx, msg_docx = generate_docx_from_chunked_csv(output_files['chunked_csv'], docx_path)
-                    if success_docx:
-                        output_files['chunked_docx'] = docx_path
-                    else:
-                        st.warning(f"DOCX not generated: {msg_docx}")
+        # Run transcription
+        success_tx, tx_logs = run_fullfile_transcription(audio_file_path, output_folder)
+        
+        # Store transcription logs
+        st.session_state.tx_logs = tx_logs
+        add_log("Transcription completed", "INFO")
+        
+        if success_tx:
+            progress_bar.progress(0.5)
+            status_text.text("Transcription finished – preparing output...")
+            
+            # Find the merged CSV file
+            merged_csv_path = os.path.join(output_folder, f"{base_name}_full_merged.csv")
+            
+            if os.path.exists(merged_csv_path):
+                add_log(f"Found merged CSV: {merged_csv_path}")
                 
-                if output_files:
-                    st.success("🎉 Processing completed successfully!")
+                # Normalize speaker names
+                add_log("Normalizing speaker names...")
+                normalize_speaker_names(merged_csv_path)
+                
+                # Validate language and mark segments
+                add_log("Validating language and marking segments...")
+                validate_language_and_mark(merged_csv_path)
+                
+                # Detect gaps
+                add_log("Detecting gaps in transcript...")
+                gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
 
-                    # Create a single ZIP with all output files
-                    import zipfile, io
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                        for file_type, file_path in output_files.items():
-                            zf.write(file_path, os.path.basename(file_path))
-                    zip_buffer.seek(0)
+                # --- Quality Analysis Section ---
+                # Read the CSV for analysis
+                try:
+                    df = pd.read_csv(merged_csv_path)
+                    label_col = 'Label' if 'Label' in df.columns else ('Notes' if 'Notes' in df.columns else None)
+                    
+                    # Store quality analysis results in session state
+                    quality_results = {
+                        'flagged_segments': [],
+                        'long_segments': [],
+                        'gap_segments': [],
+                        'total_issues': 0,
+                        'total_segments': len(df)
+                    }
+                    
+                    if label_col:
+                        # Check for gibberish/unsupported language
+                        flagged = df[df[label_col].str.contains('require human transcription', na=False)]
+                        if not flagged.empty:
+                            quality_results['flagged_segments'] = flagged.to_dict('records')
+                        
+                        # Check for long segments (>120s)
+                        long_segments = df[df[label_col].str.contains('>120s single segment', na=False)]
+                        if not long_segments.empty:
+                            quality_results['long_segments'] = long_segments.to_dict('records')
+                        
+                        # Check for gaps
+                        gaps = df[df[label_col].str.contains('>60s silence', na=False)]
+                        if gap_count > 0:
+                            quality_results['gap_segments'] = gaps.to_dict('records')
+                        
+                        # Summary
+                        total_issues = len(flagged) + len(long_segments) + gap_count
+                        quality_results['total_issues'] = total_issues
+                    
+                    # Store quality results in session state
+                    st.session_state['quality_results'] = quality_results
+                    st.session_state['quality_df'] = df.to_dict('records')
+                    st.session_state['label_col'] = label_col
+                
+                except Exception as e:
+                    add_log(f"Quality analysis failed: {str(e)}", "ERROR")
+                
+                # Create output files dictionary
+                output_files = {'merged_csv': merged_csv_path}
+                
+                st.success("🎉 Processing completed successfully!")
 
-                    st.download_button(
-                        label="⬇️ Download All Results (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"{base_name}_results.zip",
-                        mime="application/zip",
-                        type="primary",
-                        key="large_file_download_button"
-                    )
+                # Create ZIP file
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                    for file_type, file_path in output_files.items():
+                        zf.write(file_path, os.path.basename(file_path))
+                zip_buffer.seek(0)
 
-                    # Cache results in session_state so they persist on rerun
-                    st.session_state['zip_data'] = zip_buffer.getvalue()
-                    st.session_state['output_files'] = output_files
-                    st.session_state['base_name'] = base_name
-                    # store preview bytes
-                    if 'merged_csv' in output_files:
-                        with open(output_files['merged_csv'], 'rb') as _f:
-                            st.session_state['merged_csv_bytes'] = _f.read()
+                # Store results in session state
+                st.session_state['zip_data'] = zip_buffer.getvalue()
+                st.session_state['output_files'] = output_files
+                
+                # Store preview data
+                if 'merged_csv' in output_files:
+                    with open(output_files['merged_csv'], 'rb') as f:
+                        st.session_state['merged_csv_bytes'] = f.read()
+                
+                # Download button
+                st.download_button(
+                    label="⬇️ Download All Results (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"{base_name}_results.zip",
+                    mime="application/zip",
+                    type="primary",
+                    key="download_button"
+                )
 
-                    # Show a preview of merged CSV (first 10 rows)
-                    if 'merged_csv' in output_files:
-                        st.subheader("Merged Transcript Preview")
-                        df_preview = pd.read_csv(output_files['merged_csv']).head(10)
-                        st.dataframe(df_preview, use_container_width=True)
-
-                    # Show logs in expander
-                    with st.expander("🔍 View Processing Logs"):
-                        st.subheader("Transcription Logs")
-                        st.text(tx_logs)
-                        st.subheader("Chunking Logs")
-                        st.text(ck_logs)
-                        if 'gap_log_messages' in locals() and gap_log_messages:
-                            st.subheader("Gap Detection Logs")
-                            st.text("\n".join(gap_log_messages))
-                else:
-                    st.error("❌ No output files found")
-                    # Debug: Show what files are in the output folder
-                    st.write("Files in output folder:")
-                    for file in os.listdir(output_folder):
-                        st.write(f"- {file}")
+                # Show preview
+                if 'merged_csv' in output_files:
+                    st.subheader("Merged Transcript Preview")
+                    df_preview = pd.read_csv(output_files['merged_csv']).head(10)
+                    st.dataframe(df_preview, use_container_width=True)
+                
+                progress_bar.progress(1.0)
+                status_text.text("✅ Processing complete!")
+                add_log("Processing completed successfully!")
+                
             else:
-                st.error("❌ Chunking failed")
-                with st.expander("🔍 Transcription Logs"):
-                    st.text(tx_logs)
+                error_msg = "Merged CSV file not found after transcription"
+                st.error(f"❌ {error_msg}")
+                add_log(error_msg, "ERROR")
         else:
-            st.error("❌ Merged CSV file not found after transcription")
-            # Debug: Show what files are in the output folder
-            st.write("Files in output folder:")
-            for file in os.listdir(output_folder):
-                st.write(f"- {file}")
-    else:
-        st.error("❌ Transcription failed")
-        with st.expander("🔍 Transcription Logs"):
-            st.text(tx_logs)
-    # Keep temp files so preview/download still work. They can be cleared via a button in main().
+            error_msg = "Transcription failed"
+            st.error(f"❌ {error_msg}")
+            add_log(error_msg, "ERROR")
+            
+    except Exception as e:
+        error_msg = f"Processing failed: {str(e)}"
+        st.error(f"❌ {error_msg}")
+        add_log(error_msg, "ERROR")
+        add_log(traceback.format_exc(), "ERROR")
+        raise
 
 # -------------------------------------------------------------
 # Helper: flag long gaps with no transcription
@@ -834,256 +955,103 @@ def detect_90s_gaps_in_chunked_csv(csv_path):
 
 # -------------------------------------------------------------
 
-def main():
-    st.set_page_config(
-        page_title="Intage Audio Transcription",
-        page_icon="🎙️",
-        layout="wide"
-    )
-    
-    st.title("🎙️ Intage Audio Transcription")
-    st.markdown("Upload an audio file to get transcription with speaker identification and conversation chunks")
-    
-    # Check API key availability
-    api_key = get_api_key()
-    if not api_key:
-        st.error("🔑 **Configuration Error**")
-        st.markdown("Please contact support - API configuration is missing.")
-        st.stop()
-    else:
-        st.success("✅ Ready for transcription")
-
-    # Show existing results if present
-    if 'zip_data' in st.session_state and 'output_files' in st.session_state:
-        st.success("🎉 Processing completed successfully! (cached)")
-        st.download_button(
-            label="⬇️ Download All Results (ZIP)",
-            data=st.session_state['zip_data'],
-            file_name=f"{st.session_state.get('base_name','results')}_results.zip",
-            mime="application/zip",
-            type="primary",
-            key="cached_download_button"
-        )
-        if 'merged_csv_bytes' in st.session_state:
-            import io
-            st.subheader("Merged Transcript Preview")
-            df_preview = pd.read_csv(io.BytesIO(st.session_state['merged_csv_bytes'])).head(10)
-            st.dataframe(df_preview, use_container_width=True)
-        st.divider()
-        if st.button("🗑️ Clear session & temp files"):
-            st.session_state.clear()
-            try:
-                shutil.rmtree(os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_output"), ignore_errors=True)
-            except Exception:
-                pass
-            st.rerun()
-    
-    # File upload
-    uploaded_file = st.file_uploader(
-        "Choose an audio file",
-        type=['wav', 'mp3', 'flac', 'ogg', 'm4a'],
-        help="Supported formats: WAV, MP3, FLAC, OGG, M4A (Max 500MB)"
-    )
-    
-    if uploaded_file is not None:
-        # Check file size
-        file_size_mb = len(uploaded_file.getvalue()) / (1024*1024)
-        if file_size_mb > 200:
-            st.warning(f"File size ({file_size_mb:.1f} MB) exceeds the 200MB limit. Large files may take longer.")
+def display_quality_analysis():
+    """Display the persistent quality analysis results"""
+    if hasattr(st.session_state, 'quality_results') and st.session_state.quality_results:
+        st.subheader("🔍 Transcript Quality Analysis")
         
+        quality_results = st.session_state.quality_results
+        label_col = st.session_state.get('label_col', 'Notes')
+        
+        # Display flagged segments
+        if quality_results['flagged_segments']:
+            st.warning(f"⚠️ {len(quality_results['flagged_segments'])} segment(s) were flagged as requiring human transcription due to gibberish or unsupported language.")
+            with st.expander("🔍 View flagged segments"):
+                df_flagged = pd.DataFrame(quality_results['flagged_segments'])
+                st.dataframe(df_flagged[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+        
+        # Display long segments
+        if quality_results['long_segments']:
+            st.error(f"🚨 Found {len(quality_results['long_segments'])} segment(s) longer than 120 seconds - possible missing transcription!")
+            with st.expander("🔍 View long segments"):
+                df_long = pd.DataFrame(quality_results['long_segments'])
+                st.dataframe(df_long[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+        
+        # Display gap segments
+        if quality_results['gap_segments']:
+            st.warning(f"⏳ Found {len(quality_results['gap_segments'])} segment(s) with gaps > 60s")
+            with st.expander("🔍 View segments with gaps"):
+                df_gaps = pd.DataFrame(quality_results['gap_segments'])
+                st.dataframe(df_gaps[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+        
+        # Display summary
+        if quality_results['total_issues'] == 0:
+            st.success("✅ No quality issues detected!")
+        else:
+            st.info(f"📊 Quality Summary: {quality_results['total_issues']} total issues detected across {quality_results['total_segments']} segments")
+
+def main():
+    st.set_page_config(page_title="Intage Audio Transcription UI", layout="wide")
+    
+    # Initialize logging
+    init_logging()
+    
+    st.title("Intage Audio Transcription UI")
+    
+    # File uploader section
+    st.subheader("Choose an audio file")
+    uploaded_file = st.file_uploader(
+        "Drag and drop file here",
+        type=["wav", "mp3", "flac", "ogg", "m4a"],
+        help="Limit 500MB per file • WAV, MP3, FLAC, OGG, M4A"
+    )
+
+    if uploaded_file:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
         st.success(f"✅ File uploaded: {uploaded_file.name} ({file_size_mb:.1f} MB)")
         
-        # Create output directory in audioUI
-        audioui_dir = os.path.dirname(os.path.abspath(__file__))
-        output_folder = os.path.join(audioui_dir, "temp_output")
-        os.makedirs(output_folder, exist_ok=True)
-        
-        base_name = os.path.splitext(uploaded_file.name)[0]
-        
-        # Save uploaded file to audioUI directory
-        audio_file_path = os.path.join(output_folder, uploaded_file.name)
-        with open(audio_file_path, 'wb') as f:
-            f.write(uploaded_file.getvalue())
-        
-        try:
-            # Method selector
-            method = st.selectbox(
-                "Processing method:",
-                (
-                    "Transcribe whole file",
-                )
-            )
-
-            if st.button("🚀 Start Transcription", type="primary"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                status_text.text("Running transcription...")
-                progress_bar.progress(0.1)
-
-                if method.startswith("Method 1"):
-                    success_tx, tx_logs = run_elevenlabs_transcription(
-                        audio_file_path, output_folder)
-                else:
-                    success_tx, tx_logs = run_fullfile_transcription(
-                        audio_file_path, output_folder)
-
-                if success_tx:
-                    progress_bar.progress(0.5)
-                    status_text.text("Transcription finished – preparing chunks...")
-                    
-                    # Step 2: Find the merged CSV file
-                    if method.startswith("Method 1"):
-                        merged_csv_path = os.path.join(output_folder, f"{base_name}_merged.csv")
-                    else:
-                        merged_csv_path = os.path.join(output_folder, f"{base_name}_full_merged.csv")
- 
-                    if os.path.exists(merged_csv_path):
-                        # Normalize speaker names so first speaker is Mysteryshopper
-                        normalize_speaker_names(merged_csv_path)
-                        # Validate language and mark segments needing manual review
-                        validate_language_and_mark(merged_csv_path)
-                        gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
-
-                        # --- Gap Detection & Quality Analysis ---
-                        st.subheader("🔍 Transcript Quality Analysis")
-                        try:
-                            _df_flag = pd.read_csv(merged_csv_path)
-                            _label_col = 'Label' if 'Label' in _df_flag.columns else ('Notes' if 'Notes' in _df_flag.columns else None)
-                            if _label_col:
-                                # Language/gibberish flags
-                                _flagged = _df_flag[_df_flag[_label_col].str.contains('require human transcription', na=False)]
-                                if not _flagged.empty:
-                                    st.warning(f"⚠️ {_flagged.shape[0]} segment(s) were flagged as requiring human transcription due to gibberish or unsupported language.")
-                                    with st.expander("🔍 View flagged segments"):
-                                        st.dataframe(_flagged.head(20), use_container_width=True)
-                                
-                                # 60s+ silence gaps
-                                _gaps = _df_flag[_df_flag[_label_col].str.contains('>60s silence', na=False)]
-                                if gap_count:
-                                    st.warning(f"⏳ Detected {gap_count} segment(s) flagged as '>60s silence, missing audio segment'.")
-                                    with st.expander("🔍 View long-gap segments"):
-                                        st.dataframe(_gaps[['Start Time','End Time','Speaker','Text',_label_col]].head(20), use_container_width=True)
-                                
-                                # 120s+ single segments (possible missing transcription)
-                                _long_segments = _df_flag[_df_flag[_label_col].str.contains('>120s single segment', na=False)]
-                                if not _long_segments.empty:
-                                    st.error(f"🚨 Found {_long_segments.shape[0]} segment(s) longer than 120 seconds - possible missing transcription!")
-                                    with st.expander("🔍 View long segments"):
-                                        st.dataframe(_long_segments[['Start Time','End Time','Speaker','Text',_label_col]].head(20), use_container_width=True)
-                                
-                                # Summary
-                                total_issues = len(_flagged) + gap_count + len(_long_segments)
-                                if total_issues == 0:
-                                    st.success("✅ No quality issues detected - transcript appears complete and accurate!")
-                                else:
-                                    st.info(f"📊 Quality Summary: {total_issues} total issues detected across {len(_df_flag)} segments")
-                                    
-                        except Exception as _e:
-                            st.info(f"Quality analysis unavailable: {_e}")
-                        status_text.text("Creating conversation chunks...")
-                        progress_bar.progress(0.8)
-                        
-                        # Step 3: Run chunking (optional)
-                        output_files = {}
-                        if ENABLE_CHUNKING:
-                            success_ck, ck_logs = run_chunking(merged_csv_path, output_folder)
-                            if success_ck:
-                                progress_bar.progress(1.0)
-                                status_text.text("✅ Processing complete!")
-                                output_files = find_output_files(output_folder, base_name)
-                        else:
-                            # No chunking – just use merged CSV as the only output
-                            success_ck, ck_logs = True, ""  # pretend success so no error banner
-                            progress_bar.progress(1.0)
-                            status_text.text("✅ Processing complete! (chunking disabled)")
-                            output_files['merged_csv'] = merged_csv_path
-
-                        # Display results and provide download
-                        if output_files:
-                            st.success("🎉 Processing completed successfully!")
-
-                            # Create a single ZIP with all output files
-                            import zipfile, io
-                            zip_buffer = io.BytesIO()
-                            with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                                for file_type, file_path in output_files.items():
-                                    zf.write(file_path, os.path.basename(file_path))
-                            zip_buffer.seek(0)
-
-                            st.download_button(
-                                label="⬇️ Download All Results (ZIP)",
-                                data=zip_buffer.getvalue(),
-                                file_name=f"{base_name}_results.zip",
-                                mime="application/zip",
-                                type="primary",
-                                key="main_download_button"
-                            )
-
-                            # Cache results in session_state so they persist on rerun
-                            st.session_state['zip_data'] = zip_buffer.getvalue()
-                            st.session_state['output_files'] = output_files
-                            st.session_state['base_name'] = base_name
-                            # store preview bytes
-                            if 'merged_csv' in output_files:
-                                with open(output_files['merged_csv'], 'rb') as _f:
-                                    st.session_state['merged_csv_bytes'] = _f.read()
-
-                            # Optional checks only if chunking is enabled and produced CSV
-                            if ENABLE_CHUNKING and 'chunked_csv' in output_files:
-                                # Check for long gaps
-                                st.info("🔍 Checking for 90+ second long chunks in transcript...")
-                                chunk_count, long_chunks_found, gap_log_messages = detect_90s_gaps_in_chunked_csv(output_files['chunked_csv'])
-                                if chunk_count > 0:
-                                    st.warning(f"⏳ Found {chunk_count} chunk(s) longer than 90 seconds (may contain missing transcription)")
-                                    with st.expander("🔍 View long chunks"):
-                                        chunk_df = pd.DataFrame(long_chunks_found)
-                                        st.dataframe(chunk_df[['chunk_number', 'start_time', 'end_time', 'duration']], use_container_width=True)
-
-                                # Generate DOCX
-                                docx_path = os.path.join(output_folder, f"{base_name}_chunked.docx")
-                                success_docx, msg_docx = generate_docx_from_chunked_csv(output_files['chunked_csv'], docx_path)
-                                if success_docx:
-                                    output_files['chunked_docx'] = docx_path
-
-                                # Show preview of chunked CSV (5 segments per row) if available
-                                st.subheader("🎯 Chunked Transcript Preview (5 segments per row)")
-                                st.success("✅ This is the chunked format you requested - 5 conversation segments combined into 1 row!")
-                                df_chunked_preview = pd.read_csv(output_files['chunked_csv']).head(5)
-                                st.dataframe(df_chunked_preview, use_container_width=True)
-                            
-
-
-                            # Show logs in expander
-                            with st.expander("🔍 View Processing Logs"):
-                                st.subheader("Transcription Logs")
-                                st.text(tx_logs)
-                                if ENABLE_CHUNKING:
-                                    st.subheader("Chunking Logs")
-                                    st.text(ck_logs)
-                                if 'gap_log_messages' in locals() and gap_log_messages:
-                                    st.subheader("Gap Detection Logs")
-                                    st.text("\n".join(gap_log_messages))
-                        else:
-                            st.error("❌ No output files found")
-                            # Debug: Show what files are in the output folder
-                            st.write("Files in output folder:")
-                            for file in os.listdir(output_folder):
-                                st.write(f"- {file}")
-                    else:
-                        st.error("❌ Merged CSV file not found after transcription")
-                        # Debug: Show what files are in the output folder
-                        st.write("Files in output folder:")
-                        for file in os.listdir(output_folder):
-                            st.write(f"- {file}")
-                else:
-                    st.error("❌ Transcription failed")
-                    with st.expander("🔍 Transcription Logs"):
-                        st.text(tx_logs)
+        # Create temp directory for processing
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Save uploaded file
+            temp_audio_path = os.path.join(temp_dir, uploaded_file.name)
+            with open(temp_audio_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
             
-        finally:
-            # keep temp files for session caching so user can preview/download later
-            pass
+            # Create output directory
+            output_dir = os.path.join(temp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Processing method selection
+            st.subheader("Processing method:")
+            transcription_mode = st.radio(
+                "Select transcription mode",
+                ["Transcribe whole file"],
+                label_visibility="collapsed"
+            )
+            
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            if st.button("🎯 Start Transcription", type="primary"):
+                try:
+                    process_large_audio_file(temp_audio_path, output_dir, st, uploaded_file, progress_bar, status_text)
+                except Exception as e:
+                    st.error(f"❌ Processing failed: {str(e)}")
+                    st.error(f"Traceback: {traceback.format_exc()}")
+                    add_log(f"Processing failed: {str(e)}", "ERROR")
+                    add_log(f"Traceback: {traceback.format_exc()}", "ERROR")
+            
+            # Display quality analysis if it exists (persists after download)
+            if hasattr(st.session_state, 'quality_results') and st.session_state.quality_results:
+                display_quality_analysis()
+            
+            # Clear session button
+            if st.button("🗑️ Clear session & temp files"):
+                # Clear all session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.experimental_rerun()
 
 if __name__ == "__main__":
     main() 
