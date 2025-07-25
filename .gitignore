@@ -30,6 +30,7 @@ MANIFEST
 # Temporary files and outputs
 temp_output/
 chunks/
+data/
 *.csv
 *.xlsx
 *.mp3

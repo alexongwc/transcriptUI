@@ -1,0 +1,258 @@
+{
+  "analysis_timestamp": "2025-07-14T10:56:57.165352",
+  "source_file": "transcription_results/transcription_20250714_103125.json",
+  "session_info": {
+    "timestamp": "2025-07-14T10:31:25.254832",
+    "total_segments": 150,
+    "audio_file": "converted_audio.wav",
+    "processing_time": "0:15:37.797119"
+  },
+  "performance_metrics": {
+    "basic_metrics": {
+      "total_segments": 150,
+      "total_duration_seconds": 920.84,
+      "processing_time": "0:15:37.797119",
+      "real_time_factor": 1.0184148375396376,
+      "segments_per_minute": 9.77368489639894
+    },
+    "speaker_analysis": {
+      "speaker_distribution": {
+        "mysteryshopper": 81,
+        "insuranceagent": 69
+      },
+      "dominant_speaker": [
+        "mysteryshopper",
+        81
+      ],
+      "speaker_balance": 0.8518518518518519
+    },
+    "content_analysis": {
+      "avg_words_per_segment": 6.26,
+      "avg_characters_per_segment": 33.68,
+      "total_words": 939,
+      "total_characters": 5052,
+      "avg_confidence_score": 0.0,
+      "confidence_samples": 1727
+    },
+    "quality_metrics": {
+      "segments_with_confidence": 150,
+      "empty_segments": 0,
+      "short_segments": 67,
+      "long_segments": 11
+    }
+  },
+  "language_analysis": {
+    "language_distribution": {
+      "english": 104,
+      "numbers": 15,
+      "punctuation": 94,
+      "chinese": 62
+    },
+    "mixed_language_segments": 23,
+    "mixed_segments_details": [
+      {
+        "timestamp": "00:01:47.719",
+        "speaker": "mysteryshopper",
+        "text": "体，现人民呀，可以看看，看呀，你有什么问题给我吗？ Don't have fly. I thinking great wealth multiplier law.",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:01:55.920",
+        "speaker": "mysteryshopper",
+        "text": "Ok, ok, ok,大家来， sorry, I come home. I can ing on the above.",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:02:26.520",
+        "speaker": "insuranceagent",
+        "text": "ok,它是被写上的订单，所以就有一个at the race or three percent to four point two five",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:02:36.680",
+        "speaker": "insuranceagent",
+        "text": "那如果一般这个的话，它是至少都要放了一个16 17年16 17年fifteen years can or not.",
+        "languages": [
+          "english",
+          "chinese",
+          "numbers",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:03:00.759",
+        "speaker": "mysteryshopper",
+        "text": "the part of a sixteen years arrived and sixteen years old,你还有一个你等会长蛮多的。",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:03:08.200",
+        "speaker": "insuranceagent",
+        "text": "那你为什么呢？伤心的一幅画很圆满呢？两定， ok, sixteen闪电的闪电。 Ok.我说。",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:03:19.159",
+        "speaker": "insuranceagent",
+        "text": "你的other company,因为这不是什么方面的，突然说什么。",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:04:01.680",
+        "speaker": "mysteryshopper",
+        "text": "唉说他有将来 must what we do for these issues, company, right between the participating fine for this participating found not sure like the past records.",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:04:17.600",
+        "speaker": "mysteryshopper",
+        "text": "不允许买overall right. This tv eysig is quite stable.",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      },
+      {
+        "timestamp": "00:05:33.959",
+        "speaker": "insuranceagent",
+        "text": "Yeah, I'm on a barbecue at the airport.对",
+        "languages": [
+          "english",
+          "chinese",
+          "punctuation"
+        ]
+      }
+    ],
+    "mixing_percentage": 15.333333333333332
+  },
+  "conversation_flow": {
+    "total_speaker_switches": 116,
+    "avg_turn_length": 39.80172413793103,
+    "quick_switches": 20,
+    "interruption_rate": 13.333333333333334,
+    "conversation_pace": 9.77368489639894
+  },
+  "extracted_information": {
+    "numbers": [
+      {
+        "value": "2024",
+        "timestamp": "00:00:06.919",
+        "speaker": "mysteryshopper",
+        "context": "This is dream car today is september 2024 is around 10 am. I'm meeting"
+      },
+      {
+        "value": "10",
+        "timestamp": "00:00:06.919",
+        "speaker": "mysteryshopper",
+        "context": "This is dream car today is september 2024 is around 10 am. I'm meeting"
+      },
+      {
+        "value": "104.254",
+        "timestamp": "00:02:47.319",
+        "speaker": "mysteryshopper",
+        "context": "Uses this idea. I'm going to turn 104.254, 15 years, right? You think we only earn about"
+      },
+      {
+        "value": "15",
+        "timestamp": "00:02:47.319",
+        "speaker": "mysteryshopper",
+        "context": "Uses this idea. I'm going to turn 104.254, 15 years, right? You think we only earn about"
+      },
+      {
+        "value": "1",
+        "timestamp": "00:03:23.319",
+        "speaker": "mysteryshopper",
+        "context": "The 1 I still thinking IT."
+      },
+      {
+        "value": "2",
+        "timestamp": "00:04:10.360",
+        "speaker": "mysteryshopper",
+        "context": "To see which company was doing better luck when he does open ger 2 years is slower than the era and"
+      },
+      {
+        "value": "400",
+        "timestamp": "00:09:44.519",
+        "speaker": "insuranceagent",
+        "context": "400 man."
+      },
+      {
+        "value": "20",
+        "timestamp": "00:11:25.200",
+        "speaker": "insuranceagent",
+        "context": "20 year before."
+      },
+      {
+        "value": "4265",
+        "timestamp": "00:13:19.600",
+        "speaker": "mysteryshopper",
+        "context": "4265."
+      },
+      {
+        "value": "42658840",
+        "timestamp": "00:13:23.159",
+        "speaker": "insuranceagent",
+        "context": "42658840."
+      },
+      {
+        "value": "426588",
+        "timestamp": "00:13:29.000",
+        "speaker": "insuranceagent",
+        "context": "426588"
+      },
+      {
+        "value": "8014",
+        "timestamp": "00:13:34.480",
+        "speaker": "mysteryshopper",
+        "context": "8014."
+      },
+      {
+        "value": "2028",
+        "timestamp": "00:13:43.519",
+        "speaker": "mysteryshopper",
+        "context": "So do for index region, october 2028."
+      },
+      {
+        "value": "20",
+        "timestamp": "00:13:46.879",
+        "speaker": "insuranceagent",
+        "context": "October 20, 20 year"
+      },
+      {
+        "value": "20",
+        "timestamp": "00:13:46.879",
+        "speaker": "insuranceagent",
+        "context": "October 20, 20 year"
+      }
+    ]
+  }
+}
