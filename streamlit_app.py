@@ -142,13 +142,13 @@ def get_api_key():
     """Get API key from Streamlit secrets or environment variables"""
     # Try Streamlit secrets first (for cloud deployment)
     try:
-        if hasattr(st, 'secrets') and 'XI_API_KEY' in st.secrets:
-            return st.secrets['XI_API_KEY']
+        if hasattr(st, 'secrets') and 'ASSEMBLYAI_API_KEY' in st.secrets:
+            return st.secrets['ASSEMBLYAI_API_KEY']
     except:
         pass
     
     # Fallback to environment variable (for local development)
-    api_key = os.getenv("XI_API_KEY")
+    api_key = os.getenv("ASSEMBLYAI_API_KEY")
     if api_key:
         return api_key
     
@@ -158,15 +158,15 @@ def get_api_key():
 def run_elevenlabs_transcription(audio_file_path, output_folder):
     """Run the elevenlabscribe.py script to process audio"""
     try:
-        add_log("Starting ElevenLabs transcription process")
+        add_log("Starting AssemblyAI transcription process")
         
         # Get the absolute path to the audioUI directory
         audioui_dir = os.path.dirname(os.path.abspath(__file__))
-        script_path = os.path.join(audioui_dir, "elevenlabscribe.py")
+        script_path = os.path.join(audioui_dir, "assemblyscribe.py")
         
         add_log(f"Using script path: {script_path}")
         
-        # Create a temporary modified version of elevenlabscribe.py
+        # Create a temporary modified version of assemblyscribe.py
         with open(script_path, 'r') as f:
             script_content = f.read()
         
@@ -194,7 +194,7 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         modified_content = preface + '\n'.join(cleaned)
         
         # Write temporary script
-        temp_script = os.path.join(output_folder, "temp_elevenlabscribe.py")
+        temp_script = os.path.join(output_folder, "temp_assemblyscribe.py")
         with open(temp_script, 'w') as f:
             f.write(modified_content)
         
@@ -300,7 +300,7 @@ def run_chunking(csv_file_path, output_folder):
 # Enhanced find_output_files: accept both _chunked and _merged_chunked naming
 def find_output_files(output_folder, base_name):
     """Find the generated output files"""
-    # The elevenlabscribe.py creates files like: base_name_merged.csv
+    # The assemblyscribe.py creates files like: base_name_merged.csv
     # The chunk.py creates files like: base_name_merged_chunked.csv
     files = {
         'merged_csv': os.path.join(output_folder, f"{base_name}_merged.csv"),
@@ -385,25 +385,53 @@ def validate_language_and_mark(csv_path):
             df['Label'] = ''
             label_col = 'Label'
         def is_en_or_zh(text: str) -> bool:
-            text = str(text)
-            # flag replacement char counts
+            text = str(text).strip()
+            
+            # Skip empty or very short text
+            if len(text) < 2:
+                return True  # Don't flag very short utterances
+            
+            # Flag replacement char counts (corrupted text)
             if text.count('\uFFFD') / max(1, len(text)) > 0.05:
                 return False
-            # Accept Chinese
+            
+            # Accept Chinese characters
             if re.search(r'[\u4e00-\u9fff]', text):
-                return True  # has Chinese characters
-            # Remove whitespace for ratio checks
-            _clean = re.sub(r'\s+', '', text)
+                return True
+            
+            # Check for common English words (case insensitive)
+            common_words = ['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'among', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'what', 'where', 'when', 'why', 'how', 'who', 'which', 'that', 'this', 'these', 'those', 'a', 'an', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'me', 'you', 'him', 'her', 'us', 'them', 'i', 'he', 'she', 'it', 'we', 'they', 'yes', 'no', 'ok', 'okay', 'hello', 'hi', 'bye', 'thanks', 'thank', 'please', 'sorry', 'excuse', 'insurance', 'number', 'name', 'call', 'phone', 'contact', 'give', 'get', 'take', 'make', 'go', 'come', 'see', 'know', 'think', 'say', 'tell', 'ask', 'need', 'want', 'like', 'time', 'day', 'year', 'way', 'back', 'good', 'new', 'first', 'last', 'long', 'great', 'little', 'own', 'other', 'old', 'right', 'big', 'high', 'different', 'small', 'large', 'next', 'early', 'young', 'important', 'few', 'public', 'bad', 'same', 'able']
+            text_lower = text.lower()
+            for word in common_words:
+                if word in text_lower:
+                    return True
+            
+            # Remove punctuation and whitespace for character analysis
+            _clean = re.sub(r'[^\w]', '', text)
             if not _clean:
-                return False
-            # English ratio
-            letters = re.findall(r'[A-Za-z]', _clean)
-            if len(letters) >= len(_clean) * 0.4:
+                return True  # Only punctuation/whitespace, don't flag
+            
+            # Count different character types
+            letters = len(re.findall(r'[A-Za-z]', _clean))
+            digits = len(re.findall(r'\d', _clean))
+            total_chars = len(_clean)
+            
+            # Accept if has reasonable amount of English letters (lowered threshold)
+            if letters >= total_chars * 0.25:  # Reduced from 0.4 to 0.25
                 return True
-            # NEW: accept mostly-numeric utterances (e.g., account numbers)
-            digits = re.findall(r'\d', _clean)
-            if len(digits) >= len(_clean) * 0.6:
+            
+            # Accept if mostly numeric (phone numbers, account numbers, etc.)
+            if digits >= total_chars * 0.5:  # Reduced from 0.6 to 0.5
                 return True
+            
+            # Accept mixed alphanumeric content
+            if (letters + digits) >= total_chars * 0.7:
+                return True
+            
+            # If text contains any English letters and is reasonably short, accept it
+            if letters > 0 and total_chars <= 20:
+                return True
+            
             return False
         df[label_col] = df['Text'].apply(lambda t: '' if is_en_or_zh(t) else 'require human transcription')
         df.to_csv(csv_path, index=False)
@@ -496,87 +524,123 @@ def create_conversation_chunks(df):
 
 def run_fullfile_transcription(audio_file, output_dir):
     """
-    One-shot call to ElevenLabs for the whole file.
+    One-shot call to AssemblyAI for the whole file.
     Produces {base}_full.csv  (+ merged CSV) in output_dir.
     """
-    import requests, json
+    import assemblyai as aai
 
-    model = "scribe_v1"
     # Get API key from secrets or environment
     api_key = get_api_key()
     if not api_key:
-        return False, "No API key available. Set XI_API_KEY in Streamlit secrets or .env file."  # Early exit
-    headers = {"xi-api-key": api_key}
-    url = "https://api.elevenlabs.io/v1/speech-to-text"
-
-    with open(audio_file, "rb") as f:
-        files = {"file": f}
-        data  = {
-            "model_id": model,
-            "language_code": "en",
-            "diarize": True,
-            "timestamps_granularity": "word",
-            "output_format": "json"
-        }
-        r = requests.post(url, files=files, data=data, headers=headers)
-        ok  = r.status_code == 200
-        log = f"Status {r.status_code}\\n{r.text[:500]}..."   # truncate
-
-    if not ok:
-        return False, log
-
-    res = r.json()
-    segments = []
-    cur = None
-    for w in res["words"]:
-        if w["type"] != "word":
-            continue
-        sid = w["speaker_id"]
-        if cur is None or cur["speaker_id"] != sid:
+        return False, "No API key available. Set ASSEMBLYAI_API_KEY in Streamlit secrets or .env file."
+    
+    try:
+        debug_msg = f"Starting transcription for file: {audio_file}"
+        add_log(debug_msg, "DEBUG")
+        
+        debug_msg = f"API key (first 8 chars): {api_key[:8]}..."
+        add_log(debug_msg, "DEBUG")
+        
+        # Set API key
+        aai.settings.api_key = api_key
+        add_log("API key set successfully", "DEBUG")
+        
+        # Configure transcription settings
+        config = aai.TranscriptionConfig(
+            speaker_labels=True,  # Enable speaker diarization
+            language_code="en",   # English language
+            punctuate=True,       # Add punctuation
+            format_text=True,     # Format text
+        )
+        add_log("Configuration created successfully", "DEBUG")
+        
+        transcriber = aai.Transcriber()
+        add_log("Transcriber created successfully", "DEBUG")
+        
+        # Upload and transcribe
+        add_log("Starting transcription request...", "DEBUG")
+        transcript = transcriber.transcribe(audio_file, config)
+        add_log(f"Transcription completed with status: {transcript.status}", "DEBUG")
+        
+        if transcript.status == aai.TranscriptStatus.error:
+            error_msg = f"Transcription failed: {transcript.error}"
+            add_log(error_msg, "ERROR")
+            return False, error_msg
+        
+        log = f"Status: {transcript.status}\nTranscript ID: {transcript.id}"
+        add_log(f"Success log: {log}", "DEBUG")
+        
+        segments = []
+        
+        # Process utterances (speaker-segmented results)
+        if transcript.utterances:
+            for utterance in transcript.utterances:
+                segments.append({
+                    "speaker_id": utterance.speaker,
+                    "start": utterance.start / 1000.0,  # Convert ms to seconds
+                    "end": utterance.end / 1000.0,
+                    "text": utterance.text.strip()
+                })
+        
+        elif transcript.words:
+            # Fallback to word-level processing
+            cur = None
+            for word in transcript.words:
+                speaker_id = getattr(word, 'speaker', 'A')
+                if cur is None or cur["speaker_id"] != speaker_id:
+                    if cur:
+                        segments.append(cur)
+                    cur = {"speaker_id": speaker_id, "start": word.start / 1000.0,
+                           "end": word.end / 1000.0, "text": word.text}
+                else:
+                    cur["end"] = word.end / 1000.0
+                    cur["text"] += " " + word.text
             if cur:
                 segments.append(cur)
-            cur = {"speaker_id": sid, "start": w["start"],
-                   "end": w["end"], "text": w["text"]}
-        else:
-            cur["end"]  = w["end"]
-            cur["text"] += " " + w["text"]
-    if cur:
-        segments.append(cur)
-
-    # → DataFrame & CSV
-    df = pd.DataFrame([{
-        "Start Time": format_timestamp(s["start"]),
-        "End Time":   format_timestamp(s["end"]),
-        "Speaker":    f"SPEAKER_{s['speaker_id']}",
-        "Text":       s["text"],
-        "Notes":      ""
-    } for s in segments])
-
-    base = Path(audio_file).stem
-    csv  = Path(output_dir) / f"{base}_full.csv"
-    df.to_csv(csv, index=False)
-
-    # ---- NEW: create merged version similar to elevenlabscribe.py ----
-    merged_rows = []
-    prev_row = None
-    for row in df.to_dict('records'):
-        if prev_row is None:
-            prev_row = row.copy()
-        elif row['Speaker'] == prev_row['Speaker']:
-            # Extend previous segment
-            prev_row['End Time'] = row['End Time']
-            prev_row['Text'] = f"{prev_row['Text']} {row['Text']}"
-        else:
-            merged_rows.append(prev_row)
-            prev_row = row.copy()
-    if prev_row is not None:
-        merged_rows.append(prev_row)
-
-    merged_df = pd.DataFrame(merged_rows)
-    merged_csv = Path(output_dir) / f"{base}_full_merged.csv"
-    merged_df.to_csv(merged_csv, index=False)
         
-    return True, log
+        if not segments:
+            return False, "No segments found in transcription"
+
+        # → DataFrame & CSV
+        df = pd.DataFrame([{
+            "Start Time": format_timestamp(s["start"]),
+            "End Time":   format_timestamp(s["end"]),
+            "Speaker":    f"SPEAKER_{s['speaker_id']}",
+            "Text":       s["text"],
+            "Notes":      ""
+        } for s in segments])
+
+        base = Path(audio_file).stem
+        csv  = Path(output_dir) / f"{base}_full.csv"
+        df.to_csv(csv, index=False)
+
+        # Create merged version similar to assemblyscribe.py
+        merged_rows = []
+        prev_row = None
+        for row in df.to_dict('records'):
+            if prev_row is None:
+                prev_row = row.copy()
+            elif row['Speaker'] == prev_row['Speaker']:
+                # Extend previous segment
+                prev_row['End Time'] = row['End Time']
+                prev_row['Text'] = f"{prev_row['Text']} {row['Text']}"
+            else:
+                merged_rows.append(prev_row)
+                prev_row = row.copy()
+        if prev_row is not None:
+            merged_rows.append(prev_row)
+
+        merged_df = pd.DataFrame(merged_rows)
+        merged_csv = Path(output_dir) / f"{base}_full_merged.csv"
+        merged_df.to_csv(merged_csv, index=False)
+            
+        return True, log
+        
+    except Exception as e:
+        import traceback
+        error_details = f"Exception during transcription: {str(e)}\nTraceback: {traceback.format_exc()}"
+        add_log(error_details, "ERROR")
+        return False, error_details
 
 def create_transcript_with_quality_excel(merged_csv_path, quality_results, label_col, output_folder, base_name):
     """Create Excel file with merged transcript and quality analysis logs as separate sheets."""
@@ -745,9 +809,14 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                 st.error(f"❌ {error_msg}")
                 add_log(error_msg, "ERROR")
         else:
-            error_msg = "Transcription failed"
+            error_msg = f"Transcription failed: {tx_logs}"
             st.error(f"❌ {error_msg}")
             add_log(error_msg, "ERROR")
+            # Display detailed error information
+            if tx_logs and isinstance(tx_logs, str):
+                st.error(f"Error details: {tx_logs}")
+                with st.expander("🔍 Full Error Details", expanded=True):
+                    st.text(tx_logs)
             
     except Exception as e:
         error_msg = f"Processing failed: {str(e)}"
