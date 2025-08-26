@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import pandas as pd
+import os
 import tempfile
 import shutil
 import subprocess
@@ -12,7 +14,7 @@ import traceback
 from datetime import datetime
 
 # Global switch: turn conversation chunking on/off
-ENABLE_CHUNKING = False  # Set to True to create _chunked.csv and other chunk files
+ENABLE_CHUNKING = True  # Set to True to create _chunked.csv and other chunk files
 
 # No config import needed for the reverted approach
 # Load environment variables from .env file (for local development)
@@ -508,19 +510,168 @@ def create_conversation_chunks(df):
             text = segment['Text']
             combined_text_parts.append(f"{speaker}: {text}")
         
-        combined_text = "  \n".join(combined_text_parts)
+        combined_text = "\n".join(combined_text_parts)
         
-        # Build final row (exclude Speakers/Label per new requirements)
+        # Build final row (matching the successful chunked format)
         chunk_record = {
-            'Start Time': start_time,
-            'End Time': end_time,
-            'Combined Text': combined_text,
-            'Notes': ''
+            'Chunk_Number': chunk_idx,
+            'Start_Time': start_time,
+            'End_Time': end_time,
+            'Combined_Text': combined_text
         }
         
         formatted_chunks.append(chunk_record)
     
     return pd.DataFrame(formatted_chunks)
+
+def analyze_chunked_quality(chunked_df):
+    """
+    Analyze quality issues in chunked transcript data.
+    """
+    quality_results = {
+        'total_chunks': len(chunked_df),
+        'long_gaps': [],
+        'short_chunks': [],
+        'missing_speakers': [],
+        'total_issues': 0
+    }
+    
+    for idx, row in chunked_df.iterrows():
+        chunk_num = row['Chunk_Number']
+        combined_text = str(row['Combined_Text'])
+        start_time = row['Start_Time']
+        end_time = row['End_Time']
+        
+        # Check for missing speaker labels
+        if 'Mysteryshopper:' not in combined_text and 'InsuranceAgent:' not in combined_text:
+            quality_results['missing_speakers'].append({
+                'Chunk_Number': chunk_num,
+                'Issue': 'No speaker labels found',
+                'Start_Time': start_time,
+                'End_Time': end_time
+            })
+        
+        # Check for very short chunks (less than 3 lines of text)
+        text_lines = combined_text.split('\n')
+        if len(text_lines) < 3:
+            quality_results['short_chunks'].append({
+                'Chunk_Number': chunk_num,
+                'Issue': f'Short chunk ({len(text_lines)} lines)',
+                'Start_Time': start_time,
+                'End_Time': end_time
+            })
+        
+        # Check for long gaps between chunks (>240s as requested)
+        if idx > 0:
+            prev_end = chunked_df.iloc[idx-1]['End_Time']
+            # Convert time strings to seconds for comparison
+            try:
+                prev_end_sec = time_to_seconds(prev_end)
+                start_sec = time_to_seconds(start_time)
+                gap = start_sec - prev_end_sec
+                
+                if gap > 240:  # 240 seconds = 4 minutes
+                    quality_results['long_gaps'].append({
+                        'Between_Chunks': f"{chunk_num-1} and {chunk_num}",
+                        'Gap_Duration': f"{gap:.1f}s",
+                        'Issue': f'>240s gap between chunks',
+                        'Previous_End': prev_end,
+                        'Current_Start': start_time
+                    })
+            except:
+                pass  # Skip if time conversion fails
+    
+    # Calculate total issues
+    quality_results['total_issues'] = (
+        len(quality_results['long_gaps']) + 
+        len(quality_results['short_chunks']) + 
+        len(quality_results['missing_speakers'])
+    )
+    
+    return quality_results
+
+def time_to_seconds(time_str):
+    """Convert time string (HH:MM:SS,mmm) to seconds"""
+    try:
+        if ',' in time_str:
+            time_part, ms_part = time_str.split(',')
+            ms = int(ms_part) / 1000
+        else:
+            time_part = time_str
+            ms = 0
+        
+        parts = time_part.split(':')
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        seconds = int(parts[2])
+        
+        return hours * 3600 + minutes * 60 + seconds + ms
+    except:
+        return 0
+
+def create_chunked_excel_with_quality(chunked_df, quality_results, output_path, source_file, total_segments):
+    """
+    Create Excel file with chunked transcript and quality analysis sheets.
+    """
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        # Sheet 1: Chunked Transcript
+        chunked_df.to_excel(writer, sheet_name='Chunked_Transcript', index=False)
+        
+        # Sheet 2: Quality Summary
+        quality_summary = []
+        quality_summary.append(['Metric', 'Value'])
+        quality_summary.append(['Source File', str(source_file)])
+        quality_summary.append(['Total Original Segments', str(total_segments)])
+        quality_summary.append(['Total Chunks Created', str(quality_results['total_chunks'])])
+        quality_summary.append(['Segments per Chunk', str(5)])
+        quality_summary.append(['Total Quality Issues', str(quality_results['total_issues'])])
+        quality_summary.append(['Long Gaps (>240s)', str(len(quality_results['long_gaps']))])
+        quality_summary.append(['Short Chunks', str(len(quality_results['short_chunks']))])
+        quality_summary.append(['Missing Speaker Labels', str(len(quality_results['missing_speakers']))])
+        
+        quality_df = pd.DataFrame(quality_summary[1:], columns=quality_summary[0])
+        quality_df.to_excel(writer, sheet_name='Quality_Summary', index=False)
+        
+        # Sheet 3: Quality Issues (if any)
+        if quality_results['total_issues'] > 0:
+            all_issues = []
+            
+            # Add long gaps
+            for issue in quality_results['long_gaps']:
+                all_issues.append({
+                    'Issue_Type': 'Long Gap',
+                    'Location': issue['Between_Chunks'],
+                    'Description': issue['Issue'],
+                    'Duration/Details': issue['Gap_Duration'],
+                    'Start_Time': issue.get('Previous_End', ''),
+                    'End_Time': issue.get('Current_Start', '')
+                })
+            
+            # Add short chunks
+            for issue in quality_results['short_chunks']:
+                all_issues.append({
+                    'Issue_Type': 'Short Chunk',
+                    'Location': f"Chunk {issue['Chunk_Number']}",
+                    'Description': issue['Issue'],
+                    'Duration/Details': '',
+                    'Start_Time': issue['Start_Time'],
+                    'End_Time': issue['End_Time']
+                })
+            
+            # Add missing speakers
+            for issue in quality_results['missing_speakers']:
+                all_issues.append({
+                    'Issue_Type': 'Missing Speakers',
+                    'Location': f"Chunk {issue['Chunk_Number']}",
+                    'Description': issue['Issue'],
+                    'Duration/Details': '',
+                    'Start_Time': issue['Start_Time'],
+                    'End_Time': issue['End_Time']
+                })
+            
+            if all_issues:
+                issues_df = pd.DataFrame(all_issues)
+                issues_df.to_excel(writer, sheet_name='Quality_Issues', index=False)
 
 def run_fullfile_transcription(audio_file, output_dir):
     """
@@ -633,6 +784,46 @@ def run_fullfile_transcription(audio_file, output_dir):
         merged_df = pd.DataFrame(merged_rows)
         merged_csv = Path(output_dir) / f"{base}_full_merged.csv"
         merged_df.to_csv(merged_csv, index=False)
+        
+        # Add chunking integration
+        if ENABLE_CHUNKING:
+            try:
+                add_log(f"🔄 CHUNKING ENABLED - Starting chunking process...", "INFO")
+                add_log(f"📊 Merged DataFrame has {len(merged_df)} rows", "DEBUG")
+                add_log(f"📂 Output directory: {output_dir}", "DEBUG")
+                
+                # Rename speakers to match your format
+                merged_df_for_chunking = merged_df.copy()
+                add_log(f"🔄 Renaming speakers from AssemblyAI format...", "DEBUG")
+                merged_df_for_chunking['Speaker'] = merged_df_for_chunking['Speaker'].apply(
+                    lambda x: "Mysteryshopper" if x in ['SPEAKER_A', 'SPEAKER_0'] else "InsuranceAgent"
+                )
+                
+                # Create chunks
+                add_log(f"🔄 Calling create_conversation_chunks()...", "DEBUG")
+                chunked_df = create_conversation_chunks(merged_df_for_chunking)
+                
+                if chunked_df is not None and len(chunked_df) > 0:
+                    add_log(f"✅ Created {len(chunked_df)} chunks successfully", "INFO")
+                    
+                    # Save only Excel file with quality analysis
+                    chunked_excel = Path(output_dir) / f"{base}_full_chunked_with_quality.xlsx"
+                    
+                    add_log(f"💾 Creating chunked Excel with quality analysis: {chunked_excel}", "DEBUG")
+                    
+                    # Run quality analysis on chunked data
+                    chunked_quality_results = analyze_chunked_quality(chunked_df)
+                    
+                    # Create Excel with quality analysis
+                    create_chunked_excel_with_quality(chunked_df, chunked_quality_results, chunked_excel, audio_file, len(merged_df))
+                    
+                    add_log(f"🎉 CHUNKING COMPLETE! Excel file with quality analysis created", "INFO")
+                else:
+                    add_log("❌ Chunking function returned None or empty DataFrame", "ERROR")
+                    
+            except Exception as e:
+                add_log(f"❌ CHUNKING ERROR: {str(e)}", "ERROR")
+                add_log(f"❌ Chunking traceback: {traceback.format_exc()}", "ERROR")
             
         return True, log
         
@@ -739,8 +930,8 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                         if not flagged.empty:
                             quality_results['flagged_segments'] = flagged.to_dict('records')
                         
-                        # Check for long segments (>120s)
-                        long_segments = df[df[label_col].str.contains('>120s single segment', na=False)]
+                        # Check for long segments (>240s)
+                        long_segments = df[df[label_col].str.contains('>240s single segment', na=False)]
                         if not long_segments.empty:
                             quality_results['long_segments'] = long_segments.to_dict('records')
                         
@@ -764,16 +955,27 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                 # Create output files dictionary
                 output_files = {'merged_csv': merged_csv_path}
                 
+                # Check for chunked Excel file with quality analysis
+                chunked_excel = os.path.join(output_folder, f"{base_name}_full_chunked_with_quality.xlsx")
+                
+                if os.path.exists(chunked_excel):
+                    output_files['chunked_excel'] = chunked_excel
+                    add_log(f"✅ Found chunked Excel with quality analysis: {chunked_excel}")
+                
                 excel_with_quality = create_transcript_with_quality_excel(merged_csv_path, quality_results, label_col, output_folder, base_name)
                 output_files['excel_with_quality'] = excel_with_quality
 
                 st.success("🎉 Processing completed successfully!")
 
-                # Create ZIP file
+                # Create ZIP file with all outputs
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                    # Only add the new Excel file
+                    # Add the Excel file with quality analysis
                     zf.write(excel_with_quality, os.path.basename(excel_with_quality))
+                    
+                    # Add chunked Excel file if it exists
+                    if 'chunked_excel' in output_files:
+                        zf.write(output_files['chunked_excel'], os.path.basename(output_files['chunked_excel']))
                 zip_buffer.seek(0)
 
                 # Store results in session state
@@ -794,11 +996,30 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                     key="download_button"
                 )
 
-                # Show preview
-                if 'merged_csv' in output_files:
-                    st.subheader("Merged Transcript Preview")
+                # Show preview - prioritize chunked format if available
+                if 'chunked_excel' in output_files:
+                    st.subheader("✅ Chunked Transcript Preview (5 segments per chunk)")
+                    chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
+                    st.dataframe(chunked_preview, use_container_width=True)
+                    
+                    # Show sample of combined text
+                    if len(chunked_preview) > 0:
+                        st.subheader("Sample Chunk with Speaker Labels")
+                        sample_text = chunked_preview.iloc[0]['Combined_Text']
+                        st.text_area("First chunk content:", sample_text, height=150)
+                        
+                    # Show quality summary for chunks
+                    try:
+                        quality_summary = pd.read_excel(output_files['chunked_excel'], sheet_name='Quality_Summary')
+                        st.subheader("📊 Chunked Quality Analysis")
+                        st.dataframe(quality_summary, use_container_width=True)
+                    except:
+                        pass
+                elif 'merged_csv' in output_files:
+                    st.subheader("Merged Transcript Preview (Individual Segments)")
                     df_preview = pd.read_csv(output_files['merged_csv']).head(10)
                     st.dataframe(df_preview, use_container_width=True)
+                    st.warning("⚠️ Chunked files not found - showing merged transcript instead")
                 
                 progress_bar.progress(1.0)
                 status_text.text("✅ Processing complete!")

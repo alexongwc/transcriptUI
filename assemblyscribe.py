@@ -39,6 +39,63 @@ def check_api_key():
 MAX_DURATION = 300  # 5 minutes in seconds for conversation chunks
 CONVERSATION_CHUNK_SIZE = 5  # Number of conversation turns per chunk
 
+def create_conversation_chunks(df, segments_per_chunk=5):
+    """Create conversation chunks with speaker labels matching the reference format"""
+    try:
+        # Convert DataFrame to list of dictionaries
+        segments = df.to_dict('records')
+        
+        # Create chunks
+        chunks = []
+        current_chunk = []
+        
+        for segment in segments:
+            current_chunk.append(segment)
+            
+            if len(current_chunk) >= segments_per_chunk:
+                chunks.append(current_chunk)
+                current_chunk = []
+        
+        # Add remaining segments as last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        # Format chunks with speaker labels
+        formatted_chunks = []
+        
+        for chunk_idx, chunk in enumerate(chunks, 1):
+            # Get start and end times
+            start_time = chunk[0].get('Start Time')
+            end_time = chunk[-1].get('End Time')
+            
+            # Create combined text with speaker labels (newline separated)
+            combined_text_parts = []
+            
+            for segment in chunk:
+                speaker = segment.get('Speaker', '')
+                text = segment.get('Text', '')
+                
+                if text:
+                    combined_text_parts.append(f"{speaker}: {text}")
+            
+            combined_text = "\n".join(combined_text_parts)
+            
+            # Create chunk record matching reference format (without segment_count)
+            chunk_record = {
+                'Chunk_Number': chunk_idx,
+                'Start_Time': start_time,
+                'End_Time': end_time,
+                'Combined_Text': combined_text
+            }
+            
+            formatted_chunks.append(chunk_record)
+        
+        return pd.DataFrame(formatted_chunks)
+        
+    except Exception as e:
+        print(f"Error creating chunks: {e}")
+        return None
+
 def format_timestamp(seconds):
     td = timedelta(seconds=float(seconds))
     total_seconds = int(td.total_seconds())
@@ -388,9 +445,42 @@ def process_single_audio_file():
         merged_csv = os.path.join(OUTPUT_FOLDER, f"{base_name}_merged.csv")
         merged_df.to_csv(merged_csv, index=False)
         
+        # Create chunked version
+        chunked_df = create_conversation_chunks(merged_df, CONVERSATION_CHUNK_SIZE)
+        if chunked_df is not None:
+            chunked_excel = os.path.join(OUTPUT_FOLDER, f"{base_name}_chunked.xlsx")
+            chunked_csv = os.path.join(OUTPUT_FOLDER, f"{base_name}_chunked.csv")
+            chunked_txt = os.path.join(OUTPUT_FOLDER, f"{base_name}_chunked.txt")
+            
+            # Save chunked outputs
+            chunked_df.to_excel(chunked_excel, index=False, engine='openpyxl')
+            chunked_df.to_csv(chunked_csv, index=False)
+            
+            # Save readable TXT format
+            with open(chunked_txt, 'w', encoding='utf-8') as f:
+                f.write("Conversation Chunks - With Speaker Labels\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(f"Source: {AUDIO_FILE}\n")
+                f.write(f"Total segments: {len(merged_df)}\n")
+                f.write(f"Segments per chunk: {CONVERSATION_CHUNK_SIZE}\n")
+                f.write(f"Total chunks: {len(chunked_df)}\n\n")
+                f.write("=" * 80 + "\n\n")
+                
+                for idx, row in chunked_df.iterrows():
+                    f.write(f"CHUNK {row['Chunk_Number']:02d}\n")
+                    f.write("-" * 15 + "\n")
+                    f.write(f"Time Range: {row['Start_Time']} - {row['End_Time']}\n\n")
+                    f.write("Combined Text:\n")
+                    f.write(str(row['Combined_Text']))
+                    f.write("\n\n" + "=" * 80 + "\n\n")
+        
         print(f"\n✅ Processing complete!")
         print(f"Original CSV saved: {csv_path}")
         print(f"Merged CSV saved: {merged_csv}")
+        if chunked_df is not None:
+            print(f"Chunked Excel saved: {chunked_excel}")
+            print(f"Chunked CSV saved: {chunked_csv}")
+            print(f"Chunked TXT saved: {chunked_txt}")
     else:
         print("\n❌ Transcription failed.")
 
