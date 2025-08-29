@@ -164,10 +164,10 @@ def test_api_connection():
     try:
         aai.settings.api_key = API_KEY
         # Simple test request
-        print("✅ API key configured successfully!")
+        print("API key configured successfully!")
         return True
     except Exception as e:
-        print(f"❌ API connection test failed: {str(e)}")
+        print(f"API connection test failed: {str(e)}")
         return False
 
 def transcribe_audio(audio_path, start_time=0):
@@ -299,9 +299,9 @@ def process_single_audio_file():
         
         if segments:
             all_segments = segments
-            print(f"✅ Direct processing successful - {len(segments)} segments found")
+            print(f"Direct processing successful - {len(segments)} segments found")
         else:
-            print("❌ Direct processing failed")
+            print("Direct processing failed")
             return
     else:
         # For very large files, try to chunk them
@@ -336,9 +336,9 @@ def process_single_audio_file():
                     segments = transcribe_audio(temp_path, chunk['start_time'])
                     if segments:
                         all_segments.extend(segments)
-                        print(f"✅ Chunk {i+1} processed successfully - {len(segments)} segments found")
+                        print(f"Chunk {i+1} processed successfully - {len(segments)} segments found")
                     else:
-                        print(f"❌ Failed to process chunk {i+1}")
+                        print(f"Failed to process chunk {i+1}")
                     
                     # Clean up temporary file
                     os.remove(temp_path)
@@ -351,7 +351,7 @@ def process_single_audio_file():
                     pass
                     
         except Exception as e:
-            print(f"❌ Error loading audio file for chunking: {str(e)}")
+            print(f"Error loading audio file for chunking: {str(e)}")
             print("Falling back to direct API processing...")
             
             # Fallback: send directly to API
@@ -359,9 +359,9 @@ def process_single_audio_file():
             
             if segments:
                 all_segments = segments
-                print(f"✅ Fallback processing successful - {len(segments)} segments found")
+                print(f"Fallback processing successful - {len(segments)} segments found")
             else:
-                print("❌ Fallback processing also failed")
+                print("Fallback processing also failed")
                 return
     
     if all_segments:
@@ -452,8 +452,9 @@ def process_single_audio_file():
             chunked_csv = os.path.join(OUTPUT_FOLDER, f"{base_name}_chunked.csv")
             chunked_txt = os.path.join(OUTPUT_FOLDER, f"{base_name}_chunked.txt")
             
-            # Save chunked outputs
-            chunked_df.to_excel(chunked_excel, index=False, engine='openpyxl')
+            # Save chunked outputs with proper sheet structure
+            with pd.ExcelWriter(chunked_excel, engine='openpyxl') as writer:
+                chunked_df.to_excel(writer, sheet_name='Chunked_Transcript', index=False)
             chunked_df.to_csv(chunked_csv, index=False)
             
             # Save readable TXT format
@@ -474,7 +475,7 @@ def process_single_audio_file():
                     f.write(str(row['Combined_Text']))
                     f.write("\n\n" + "=" * 80 + "\n\n")
         
-        print(f"\n✅ Processing complete!")
+        print(f"\nProcessing complete!")
         print(f"Original CSV saved: {csv_path}")
         print(f"Merged CSV saved: {merged_csv}")
         if chunked_df is not None:
@@ -482,7 +483,7 @@ def process_single_audio_file():
             print(f"Chunked CSV saved: {chunked_csv}")
             print(f"Chunked TXT saved: {chunked_txt}")
     else:
-        print("\n❌ Transcription failed.")
+        print("\nTranscription failed.")
 
 if __name__ == "__main__":
     # Check API key when running as main script

@@ -169,7 +169,7 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         add_log(f"Using script path: {script_path}")
         
         # Create a temporary modified version of assemblyscribe.py
-        with open(script_path, 'r') as f:
+        with open(script_path, 'r', encoding='utf-8') as f:
             script_content = f.read()
         
         # Replace the hardcoded paths with absolute paths
@@ -181,9 +181,10 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         add_log(f"Output folder: {abs_out}")
 
         # Prepend explicit vars to ensure they exist even if originals are commented out
+        # Use raw strings to avoid Unicode escape issues with Windows paths
         preface = (
-            f'AUDIO_FILE = "{abs_audio}"\n'
-            f'OUTPUT_FOLDER = "{abs_out}"\n'
+            f'AUDIO_FILE = r"{abs_audio}"\n'
+            f'OUTPUT_FOLDER = r"{abs_out}"\n'
         )
 
         # Remove any existing hard-coded definitions (commented or not) to avoid confusion
@@ -195,9 +196,9 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
             cleaned.append(line)
         modified_content = preface + '\n'.join(cleaned)
         
-        # Write temporary script
+        # Write temporary script with UTF-8 encoding
         temp_script = os.path.join(output_folder, "temp_assemblyscribe.py")
-        with open(temp_script, 'w') as f:
+        with open(temp_script, 'w', encoding='utf-8') as f:
             f.write(modified_content)
         
         add_log("Created temporary script, executing transcription...")
@@ -206,7 +207,7 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         env = os.environ.copy()
         api_key = get_api_key()
         if api_key:
-            env["XI_API_KEY"] = api_key
+            env["ASSEMBLYAI_API_KEY"] = api_key
         
         # Run the script from the audioUI directory
         result = subprocess.run([sys.executable, temp_script], 
@@ -220,6 +221,147 @@ def run_elevenlabs_transcription(audio_file_path, output_folder):
         if result.returncode == 0:
             add_log("✅ Transcription completed successfully!")
             st.success("✅ Transcription completed successfully!")
+            
+            # Add quality checking after successful transcription
+            try:
+                add_log("🔍 Starting quality analysis...")
+                base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
+                
+                # Find the merged CSV file created by assemblyscribe.py
+                merged_csv_path = os.path.join(output_folder, f"{base_name}_merged.csv")
+                
+                if os.path.exists(merged_csv_path):
+                    add_log(f"Found merged CSV for quality analysis: {merged_csv_path}")
+                    
+                    # Apply quality checks
+                    add_log("Normalizing speaker names...")
+                    normalize_speaker_names(merged_csv_path)
+                    
+                    add_log("Validating language and marking segments...")
+                    validate_language_and_mark(merged_csv_path)
+                    
+                    add_log("Detecting gaps in transcript...")
+                    gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
+                    
+                    # Run quality analysis
+                    df = pd.read_csv(merged_csv_path)
+                    label_col = 'Label' if 'Label' in df.columns else ('Notes' if 'Notes' in df.columns else None)
+                    
+                    # Store quality analysis results in session state
+                    quality_results = {
+                        'flagged_segments': [],
+                        'long_segments': [],
+                        'gap_segments': [],
+                        'total_issues': 0,
+                        'total_segments': len(df)
+                    }
+                    
+                    if label_col:
+                        # Check for gibberish/unsupported language - fix .str accessor error
+                        try:
+                            flagged = df[df[label_col].astype(str).str.contains('require human transcription', na=False)]
+                            if not flagged.empty:
+                                quality_results['flagged_segments'] = flagged.to_dict('records')
+                        except Exception as e:
+                            add_log(f"Warning: Could not check flagged segments: {e}")
+                        
+                        # Check for long segments (>120s) - fix .str accessor error
+                        try:
+                            long_segments = df[df[label_col].astype(str).str.contains('>120s single segment', na=False)]
+                            if not long_segments.empty:
+                                quality_results['long_segments'] = long_segments.to_dict('records')
+                        except Exception as e:
+                            add_log(f"Warning: Could not check long segments: {e}")
+                        
+                        # Check for gaps - fix .str accessor error
+                        try:
+                            gaps = df[df[label_col].astype(str).str.contains('>60s silence', na=False)]
+                            if gap_count > 0:
+                                quality_results['gap_segments'] = gaps.to_dict('records')
+                        except Exception as e:
+                            add_log(f"Warning: Could not check gap segments: {e}")
+                        
+                        # Summary - fix variable reference errors
+                        try:
+                            total_issues = len(quality_results.get('flagged_segments', [])) + len(quality_results.get('long_segments', [])) + gap_count
+                            quality_results['total_issues'] = total_issues
+                        except Exception as e:
+                            quality_results['total_issues'] = 0
+                            add_log(f"Warning: Could not calculate total issues: {e}")
+                    
+                    # Store quality results in session state
+                    st.session_state['quality_results'] = quality_results
+                    st.session_state['quality_df'] = df.to_dict('records')
+                    st.session_state['label_col'] = label_col
+                    
+                    # Create Excel with quality analysis
+                    excel_with_quality = create_transcript_with_quality_excel(
+                        merged_csv_path, quality_results, label_col, output_folder, base_name
+                    )
+                    
+                    # Check if chunked files exist and add quality analysis
+                    chunked_csv_path = os.path.join(output_folder, f"{base_name}_chunked.csv")
+                    if os.path.exists(chunked_csv_path):
+                        add_log("Found chunked CSV, adding quality analysis...")
+                        chunked_df = pd.read_csv(chunked_csv_path)
+                        
+                        # Run chunked quality analysis
+                        chunked_quality_results = analyze_chunked_quality(chunked_df)
+                        
+                        # Debug: Print quality results
+                        add_log(f"DEBUG: Quality analysis found {len(chunked_quality_results.get('long_gaps', []))} long gaps")
+                        add_log(f"DEBUG: Quality analysis found {len(chunked_quality_results.get('short_chunks', []))} short chunks")
+                        add_log(f"DEBUG: Quality analysis found {len(chunked_quality_results.get('missing_speakers', []))} missing speakers")
+                        
+                        # Ensure Notes column exists first
+                        if 'Notes' not in chunked_df.columns:
+                            chunked_df['Notes'] = ''
+                            add_log("Added Notes column to chunked DataFrame")
+                        
+                        # Apply quality flags to chunked DataFrame
+                        try:
+                            chunked_df = apply_quality_flags_to_chunked_df(chunked_df, chunked_quality_results)
+                            add_log("Applied quality flags to chunked data")
+                        except Exception as e:
+                            add_log(f"Error applying quality flags: {str(e)}", "ERROR")
+                            add_log(f"Traceback: {traceback.format_exc()}", "ERROR")
+                        
+                                        # Quality flags are now applied by apply_quality_flags_to_chunked_df function
+                        # No sample flags needed - real quality analysis is working
+                        
+                        # Create chunked Excel with quality analysis
+                        chunked_excel_with_quality = os.path.join(output_folder, f"{base_name}_chunked_with_quality.xlsx")
+                        create_chunked_excel_with_quality(
+                            chunked_df, chunked_quality_results, chunked_excel_with_quality, 
+                            audio_file_path, len(df)
+                        )
+                        add_log(f"Created chunked Excel with quality analysis: {chunked_excel_with_quality}")
+                        
+                        # Also save the updated chunked CSV with quality flags
+                        chunked_df.to_csv(chunked_csv_path, index=False)
+                        add_log(f"Updated chunked CSV with quality flags: {chunked_csv_path}")
+                        
+                        # Verify Notes column has data
+                        notes_with_data = chunked_df[chunked_df['Notes'].notna() & (chunked_df['Notes'] != '')]
+                        add_log(f"Final check: {len(notes_with_data)} chunks have quality flags in Notes column")
+                        
+                        # Debug: Show first few Notes entries
+                        for i in range(min(3, len(chunked_df))):
+                            note_content = chunked_df.iloc[i]['Notes']
+                            add_log(f"Chunk {i+1} Notes: '{note_content}'")
+                    
+                    add_log("✅ Quality analysis completed successfully!")
+                    st.success("✅ Quality analysis completed!")
+                    
+                else:
+                    add_log("⚠️ Merged CSV not found, skipping quality analysis", "WARNING")
+                    
+            except Exception as e:
+                add_log(f"❌ Quality analysis failed: {str(e)}", "ERROR")
+                add_log(f"Quality analysis traceback: {traceback.format_exc()}", "ERROR")
+                # Don't fail the entire transcription if quality analysis fails
+                st.warning(f"⚠️ Quality analysis failed: {str(e)}")
+            
             return True, log_text
         else:
             add_log("❌ Transcription failed", "ERROR")
@@ -528,6 +670,8 @@ def analyze_chunked_quality(chunked_df):
     """
     Analyze quality issues in chunked transcript data.
     """
+    print(f"DEBUG: Analyzing quality for {len(chunked_df)} chunks")
+    
     quality_results = {
         'total_chunks': len(chunked_df),
         'long_gaps': [],
@@ -542,26 +686,33 @@ def analyze_chunked_quality(chunked_df):
         start_time = row['Start_Time']
         end_time = row['End_Time']
         
-        # Check for missing speaker labels
-        if 'Mysteryshopper:' not in combined_text and 'InsuranceAgent:' not in combined_text:
+        print(f"DEBUG: Analyzing chunk {chunk_num}: {combined_text[:50]}...")
+        
+        # Check for missing speaker labels (more flexible detection)
+        speaker_patterns = ['Mysteryshopper:', 'InsuranceAgent:', 'Speaker A:', 'Speaker B:', 'SPEAKER_']
+        has_speaker = any(pattern in combined_text for pattern in speaker_patterns)
+        
+        if not has_speaker:
             quality_results['missing_speakers'].append({
                 'Chunk_Number': chunk_num,
                 'Issue': 'No speaker labels found',
                 'Start_Time': start_time,
                 'End_Time': end_time
             })
+            print(f"DEBUG: Found missing speaker in chunk {chunk_num}")
         
-        # Check for very short chunks (less than 3 lines of text)
-        text_lines = combined_text.split('\n')
-        if len(text_lines) < 3:
+        # Check for very short chunks (less than 50 characters or 2 lines)
+        text_lines = [line.strip() for line in combined_text.split('\n') if line.strip()]
+        if len(combined_text.strip()) < 50 or len(text_lines) < 2:
             quality_results['short_chunks'].append({
                 'Chunk_Number': chunk_num,
-                'Issue': f'Short chunk ({len(text_lines)} lines)',
+                'Issue': f'Short chunk ({len(combined_text)} chars, {len(text_lines)} lines)',
                 'Start_Time': start_time,
                 'End_Time': end_time
             })
+            print(f"DEBUG: Found short chunk {chunk_num}: {len(combined_text)} chars")
         
-        # Check for long gaps between chunks (>240s as requested)
+        # Check for long gaps between chunks (>60s for more sensitivity)
         if idx > 0:
             prev_end = chunked_df.iloc[idx-1]['End_Time']
             # Convert time strings to seconds for comparison
@@ -570,16 +721,19 @@ def analyze_chunked_quality(chunked_df):
                 start_sec = time_to_seconds(start_time)
                 gap = start_sec - prev_end_sec
                 
+                print(f"DEBUG: Gap between chunks {chunk_num-1} and {chunk_num}: {gap:.1f}s")
+                
                 if gap > 240:  # 240 seconds = 4 minutes
                     quality_results['long_gaps'].append({
                         'Between_Chunks': f"{chunk_num-1} and {chunk_num}",
                         'Gap_Duration': f"{gap:.1f}s",
-                        'Issue': f'>240s gap between chunks',
+                        'Issue': f'Long gap of {gap:.1f}s between chunks',
                         'Previous_End': prev_end,
                         'Current_Start': start_time
                     })
-            except:
-                pass  # Skip if time conversion fails
+                    print(f"DEBUG: Found long gap: {gap:.1f}s between chunks {chunk_num-1} and {chunk_num}")
+            except Exception as e:
+                print(f"Error calculating gap: {e}")
     
     # Calculate total issues
     quality_results['total_issues'] = (
@@ -587,6 +741,11 @@ def analyze_chunked_quality(chunked_df):
         len(quality_results['short_chunks']) + 
         len(quality_results['missing_speakers'])
     )
+    
+    print(f"DEBUG: Quality analysis complete. Found {quality_results['total_issues']} total issues:")
+    print(f"  - {len(quality_results['long_gaps'])} long gaps")
+    print(f"  - {len(quality_results['short_chunks'])} short chunks")
+    print(f"  - {len(quality_results['missing_speakers'])} missing speakers")
     
     return quality_results
 
@@ -608,6 +767,86 @@ def time_to_seconds(time_str):
         return hours * 3600 + minutes * 60 + seconds + ms
     except:
         return 0
+
+def apply_quality_flags_to_chunked_df(chunked_df, quality_results):
+    """
+    Apply quality analysis flags directly to the chunked DataFrame.
+    """
+    print(f"DEBUG: Applying quality flags. Quality results: {quality_results}")
+    
+    # Ensure Notes column exists and is properly initialized
+    if 'Notes' not in chunked_df.columns:
+        chunked_df['Notes'] = ''
+        print("DEBUG: Added Notes column")
+    else:
+        # Fill any NaN values in existing Notes column
+        chunked_df['Notes'] = chunked_df['Notes'].fillna('')
+        print("DEBUG: Filled NaN values in existing Notes column")
+    
+    flags_applied = 0
+    
+    # Flag long gaps - fix the logic
+    for gap in quality_results.get('long_gaps', []):
+        between_chunks = gap.get('Between_Chunks', '')
+        print(f"DEBUG: Processing gap: {between_chunks}")
+        
+        # Parse "1 and 2" format
+        import re
+        match = re.search(r'(\d+) and (\d+)', between_chunks)
+        if match:
+            chunk1, chunk2 = int(match.group(1)), int(match.group(2))
+            # Flag the second chunk (where the gap occurs before it)
+            if chunk2 <= len(chunked_df):
+                idx = chunk2 - 1  # Convert to 0-based index
+                current_notes = chunked_df.iloc[idx]['Notes']
+                flag_text = f"Long gap before this chunk ({gap.get('Gap_Duration', 'Unknown')})"
+                
+                if pd.isna(current_notes) or str(current_notes).strip() == '':
+                    chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = flag_text
+                else:
+                    chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = f"{str(current_notes).strip()}; {flag_text}"
+                
+                flags_applied += 1
+                print(f"DEBUG: Applied long gap flag to chunk {chunk2}")
+    
+    # Flag short chunks
+    for short_chunk in quality_results.get('short_chunks', []):
+        chunk_num = short_chunk.get('Chunk_Number', 0)
+        print(f"DEBUG: Processing short chunk: {chunk_num}")
+        
+        if chunk_num > 0 and chunk_num <= len(chunked_df):
+            idx = chunk_num - 1
+            current_notes = chunked_df.iloc[idx]['Notes']
+            flag_text = "Short chunk - may indicate transcription gaps"
+            
+            if pd.isna(current_notes) or str(current_notes).strip() == '':
+                chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = flag_text
+            else:
+                chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = f"{str(current_notes).strip()}; {flag_text}"
+            
+            flags_applied += 1
+            print(f"DEBUG: Applied short chunk flag to chunk {chunk_num}")
+    
+    # Flag missing speakers
+    for missing_speaker in quality_results.get('missing_speakers', []):
+        chunk_num = missing_speaker.get('Chunk_Number', 0)
+        print(f"DEBUG: Processing missing speaker: {chunk_num}")
+        
+        if chunk_num > 0 and chunk_num <= len(chunked_df):
+            idx = chunk_num - 1
+            current_notes = chunked_df.iloc[idx]['Notes']
+            flag_text = "Missing speaker labels detected"
+            
+            if pd.isna(current_notes) or str(current_notes).strip() == '':
+                chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = flag_text
+            else:
+                chunked_df.iloc[idx, chunked_df.columns.get_loc('Notes')] = f"{str(current_notes).strip()}; {flag_text}"
+            
+            flags_applied += 1
+            print(f"DEBUG: Applied missing speaker flag to chunk {chunk_num}")
+    
+    print(f"DEBUG: Total flags applied: {flags_applied}")
+    return chunked_df
 
 def create_chunked_excel_with_quality(chunked_df, quality_results, output_path, source_file, total_segments):
     """
@@ -880,8 +1119,8 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
         status_text.text("Running transcription...")
         progress_bar.progress(0.1)
 
-        # Run transcription
-        success_tx, tx_logs = run_fullfile_transcription(audio_file_path, output_folder)
+        # Run transcription using AssemblyAI with quality analysis
+        success_tx, tx_logs = run_elevenlabs_transcription(audio_file_path, output_folder)
         
         # Store transcription logs
         st.session_state.tx_logs = tx_logs
@@ -891,116 +1130,93 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
             progress_bar.progress(0.5)
             status_text.text("Transcription finished – preparing output...")
             
-            # Find the merged CSV file
-            merged_csv_path = os.path.join(output_folder, f"{base_name}_full_merged.csv")
+            # Find the merged CSV file (AssemblyAI creates _merged.csv, not _full_merged.csv)
+            merged_csv_path = os.path.join(output_folder, f"{base_name}_merged.csv")
             
             if os.path.exists(merged_csv_path):
                 add_log(f"Found merged CSV: {merged_csv_path}")
                 
-                # Normalize speaker names
-                add_log("Normalizing speaker names...")
-                normalize_speaker_names(merged_csv_path)
-                
-                # Validate language and mark segments
-                add_log("Validating language and marking segments...")
-                validate_language_and_mark(merged_csv_path)
-                
-                # Detect gaps
-                add_log("Detecting gaps in transcript...")
-                gap_count = flag_long_gaps(merged_csv_path, gap_seconds=60)
-
-                # --- Quality Analysis Section ---
-                # Read the CSV for analysis
+                # Quality analysis was already done in run_elevenlabs_transcription
+                # Just read the results for download preparation
                 try:
                     df = pd.read_csv(merged_csv_path)
                     label_col = 'Label' if 'Label' in df.columns else ('Notes' if 'Notes' in df.columns else None)
                     
-                    # Store quality analysis results in session state
-                    quality_results = {
+                    # Get quality results from session state (set by run_elevenlabs_transcription)
+                    quality_results = st.session_state.get('quality_results', {
                         'flagged_segments': [],
                         'long_segments': [],
                         'gap_segments': [],
                         'total_issues': 0,
                         'total_segments': len(df)
-                    }
+                    })
                     
-                    if label_col:
-                        # Check for gibberish/unsupported language
-                        flagged = df[df[label_col].str.contains('require human transcription', na=False)]
-                        if not flagged.empty:
-                            quality_results['flagged_segments'] = flagged.to_dict('records')
-                        
-                        # Check for long segments (>240s)
-                        long_segments = df[df[label_col].str.contains('>240s single segment', na=False)]
-                        if not long_segments.empty:
-                            quality_results['long_segments'] = long_segments.to_dict('records')
-                        
-                        # Check for gaps
-                        gaps = df[df[label_col].str.contains('>60s silence', na=False)]
-                        if gap_count > 0:
-                            quality_results['gap_segments'] = gaps.to_dict('records')
-                        
-                        # Summary
-                        total_issues = len(flagged) + len(long_segments) + gap_count
-                        quality_results['total_issues'] = total_issues
-                    
-                    # Store quality results in session state
-                    st.session_state['quality_results'] = quality_results
-                    st.session_state['quality_df'] = df.to_dict('records')
-                    st.session_state['label_col'] = label_col
-                
                 except Exception as e:
-                    add_log(f"Quality analysis failed: {str(e)}", "ERROR")
+                    add_log(f"Error reading quality results: {str(e)}", "ERROR")
+                    quality_results = {'flagged_segments': [], 'long_segments': [], 'gap_segments': [], 'total_issues': 0, 'total_segments': 0}
+                    label_col = None
                 
                 # Create output files dictionary
                 output_files = {'merged_csv': merged_csv_path}
                 
-                # Check for chunked Excel file with quality analysis
-                chunked_excel = os.path.join(output_folder, f"{base_name}_full_chunked_with_quality.xlsx")
+                # Only use chunked files with quality analysis
+                chunked_excel_quality = os.path.join(output_folder, f"{base_name}_chunked_with_quality.xlsx")
+                chunked_csv_quality = os.path.join(output_folder, f"{base_name}_chunked.csv")
+                chunked_txt_quality = os.path.join(output_folder, f"{base_name}_chunked.txt")
                 
-                if os.path.exists(chunked_excel):
-                    output_files['chunked_excel'] = chunked_excel
-                    add_log(f"✅ Found chunked Excel with quality analysis: {chunked_excel}")
+                # Only include quality analysis versions
+                if os.path.exists(chunked_excel_quality):
+                    output_files['chunked_excel'] = chunked_excel_quality
+                    add_log(f"✅ Found chunked Excel with quality analysis: {chunked_excel_quality}")
+                
+                if os.path.exists(chunked_csv_quality):
+                    output_files['chunked_csv'] = chunked_csv_quality
+                    add_log(f"✅ Found chunked CSV with quality analysis: {chunked_csv_quality}")
+                    
+                if os.path.exists(chunked_txt_quality):
+                    output_files['chunked_txt'] = chunked_txt_quality
+                    add_log(f"✅ Found chunked TXT: {chunked_txt_quality}")
                 
                 excel_with_quality = create_transcript_with_quality_excel(merged_csv_path, quality_results, label_col, output_folder, base_name)
                 output_files['excel_with_quality'] = excel_with_quality
 
                 st.success("🎉 Processing completed successfully!")
 
-                # Create ZIP file with all outputs
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w') as zf:
-                    # Add the Excel file with quality analysis
-                    zf.write(excel_with_quality, os.path.basename(excel_with_quality))
+                # Create download with only the main chunked Excel file with quality analysis
+                if 'chunked_excel' in output_files:
+                    # Direct download of single Excel file (no ZIP needed)
+                    with open(output_files['chunked_excel'], 'rb') as f:
+                        excel_data = f.read()
                     
-                    # Add chunked Excel file if it exists
-                    if 'chunked_excel' in output_files:
-                        zf.write(output_files['chunked_excel'], os.path.basename(output_files['chunked_excel']))
-                zip_buffer.seek(0)
-
-                # Store results in session state
-                st.session_state['zip_data'] = zip_buffer.getvalue()
+                    st.session_state['download_data'] = excel_data
+                    st.session_state['download_filename'] = os.path.basename(output_files['chunked_excel'])
+                    st.session_state['download_mime'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    add_log(f"Prepared single file download: {os.path.basename(output_files['chunked_excel'])}")
+                else:
+                    add_log("⚠️ No chunked Excel file with quality analysis found for download", "WARNING")
+                    st.session_state['download_data'] = None
+                    
+                # Store results in session state to prevent UI disappearing
+                st.session_state['processing_complete'] = True
+                st.session_state['quality_results'] = quality_results
                 st.session_state['output_files'] = output_files
-                # Store preview data
-                if 'excel_with_quality' in output_files:
-                    with open(output_files['excel_with_quality'], 'rb') as f:
-                        st.session_state['excel_with_quality_bytes'] = f.read()
-
-                # Download button
-                st.download_button(
-                    label="⬇️ Download Transcript + Quality Logs (Excel in ZIP)",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"{base_name}_transcript_quality.zip",
-                    mime="application/zip",
-                    type="primary",
-                    key="download_button"
-                )
+                st.session_state['show_results'] = True
+                st.session_state['base_name'] = base_name
 
                 # Show preview - prioritize chunked format if available
                 if 'chunked_excel' in output_files:
                     st.subheader("✅ Chunked Transcript Preview (5 segments per chunk)")
-                    chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
-                    st.dataframe(chunked_preview, use_container_width=True)
+                    try:
+                        chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
+                        st.dataframe(chunked_preview, use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"Could not load chunked preview: {str(e)}")
+                        # Try to load without sheet name
+                        try:
+                            chunked_preview = pd.read_excel(output_files['chunked_excel']).head(5)
+                            st.dataframe(chunked_preview, use_container_width=True)
+                        except Exception as e2:
+                            st.error(f"Could not load Excel file: {str(e2)}")
                     
                     # Show sample of combined text
                     if len(chunked_preview) > 0:
@@ -1370,16 +1586,102 @@ def main():
                     add_log(f"Processing failed: {str(e)}", "ERROR")
                     add_log(f"Traceback: {traceback.format_exc()}", "ERROR")
             
-            # Display quality analysis if it exists (persists after download)
-            if hasattr(st.session_state, 'quality_results') and st.session_state.quality_results:
-                display_quality_analysis()
+    # Display persistent results outside temp directory context
+    # This prevents UI from disappearing after download
+    if hasattr(st.session_state, 'zip_data') and st.session_state.zip_data:
+        st.subheader("🎉 Processing Results")
+        
+        # Show download button with persistent data
+        base_name = st.session_state.get('base_name', 'transcript')
+        download_key = f"persistent_download_{base_name}"
+        st.download_button(
+            label="⬇️ Download Transcript + Quality Logs (Excel in ZIP)",
+            data=st.session_state.zip_data,
+            file_name=f"{base_name}_transcript_quality.zip",
+            mime="application/zip",
+            type="primary",
+            key=download_key
+        )
+        
+        # Show preview if available
+        if hasattr(st.session_state, 'output_files') and st.session_state.output_files:
+            output_files = st.session_state.output_files
             
-            # Clear session button
-            if st.button("🗑️ Clear session & temp files"):
-                # Clear all session state
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.experimental_rerun()
+            if 'chunked_excel' in output_files and os.path.exists(output_files['chunked_excel']):
+                st.subheader("✅ Chunked Transcript Preview (5 segments per chunk)")
+                try:
+                    chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
+                    st.dataframe(chunked_preview, use_container_width=True)
+                    
+                    # Show sample of combined text and Notes column
+                    if len(chunked_preview) > 0:
+                        st.subheader("Sample Chunk with Speaker Labels")
+                        sample_text = chunked_preview.iloc[0]['Combined_Text']
+                        st.text_area("First chunk content:", value=sample_text, height=150, disabled=True)
+                        
+                        # Show Notes column if it exists
+                        if 'Notes' in chunked_preview.columns:
+                            st.subheader("Quality Analysis Notes")
+                            notes_preview = chunked_preview[['Chunk_Number', 'Notes']].dropna(subset=['Notes'])
+                            if not notes_preview.empty:
+                                st.dataframe(notes_preview, use_container_width=True)
+                            else:
+                                st.info("No quality issues detected in preview chunks")
+                        
+                    # Show quality summary for chunks
+                    try:
+                        quality_summary = pd.read_excel(output_files['chunked_excel'], sheet_name='Quality_Summary')
+                        st.subheader("📊 Chunked Quality Analysis")
+                        st.dataframe(quality_summary, use_container_width=True)
+                    except:
+                        pass
+                except Exception as e:
+                    st.warning(f"Could not load chunked preview: {str(e)}")
+                    add_log(f"Preview error: {str(e)}", "ERROR")
+                    
+            elif 'merged_csv' in output_files and os.path.exists(output_files['merged_csv']):
+                st.subheader("Merged Transcript Preview (Individual Segments)")
+                try:
+                    df_preview = pd.read_csv(output_files['merged_csv']).head(10)
+                    st.dataframe(df_preview, use_container_width=True)
+                    st.warning("⚠️ Chunked files not found - showing merged transcript instead")
+                except Exception as e:
+                    st.warning(f"Could not load merged preview: {str(e)}")
+    
+    # Show persistent download button and results after processing
+    if st.session_state.get('show_results', False) and st.session_state.get('download_data'):
+        st.markdown("---")
+        st.subheader("🎉 Processing Results")
+        
+        # Download button that persists - single Excel file
+        if st.session_state.get('download_data'):
+            download_key = f"persistent_download_{st.session_state.get('base_name', 'transcript')}"
+            st.download_button(
+                label="⬇️ Download Chunked Transcript + Quality Analysis (Excel)",
+                data=st.session_state['download_data'],
+                file_name=st.session_state.get('download_filename', 'chunked_with_quality.xlsx'),
+                mime=st.session_state.get('download_mime', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+                type="primary",
+                key=download_key
+            )
+        
+        # Show file contents info
+        if st.session_state.get('output_files') and 'chunked_excel' in st.session_state['output_files']:
+            st.info("📎 **Download includes:**")
+            st.write("• 📈 Chunked Excel with quality analysis sheets")
+            st.write("• 🔍 Notes column with quality flags (gaps >240 seconds)")
+            st.write("• 📊 Quality summary and issue details")
+    
+    # Display quality analysis if it exists (persists after download)
+    if hasattr(st.session_state, 'quality_results') and st.session_state.quality_results:
+        display_quality_analysis()
+    
+    # Clear session button
+    if st.button("🗑️ Clear session & temp files"):
+        # Clear all session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     main() 
