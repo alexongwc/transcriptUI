@@ -1209,13 +1209,13 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                     st.subheader("Chunked Transcript Preview (5 segments per chunk)")
                     try:
                         chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
-                        st.dataframe(chunked_preview, use_container_width=True)
+                        st.dataframe(chunked_preview, width='stretch')
                     except Exception as e:
                         st.warning(f"Could not load chunked preview: {str(e)}")
                         # Try to load without sheet name
                         try:
                             chunked_preview = pd.read_excel(output_files['chunked_excel']).head(5)
-                            st.dataframe(chunked_preview, use_container_width=True)
+                            st.dataframe(chunked_preview, width='stretch')
                         except Exception as e2:
                             st.error(f"Could not load Excel file: {str(e2)}")
                     
@@ -1229,13 +1229,13 @@ def process_large_audio_file(audio_file_path, output_folder, st, uploaded_file, 
                     try:
                         quality_summary = pd.read_excel(output_files['chunked_excel'], sheet_name='Quality_Summary')
                         st.subheader("Chunked Quality Analysis")
-                        st.dataframe(quality_summary, use_container_width=True)
+                        st.dataframe(quality_summary, width='stretch')
                     except:
                         pass
                 elif 'merged_csv' in output_files:
                     st.subheader("Merged Transcript Preview (Individual Segments)")
                     df_preview = pd.read_csv(output_files['merged_csv']).head(10)
-                    st.dataframe(df_preview, use_container_width=True)
+                    st.dataframe(df_preview, width='stretch')
                     st.warning("Chunked files not found - showing merged transcript instead")
                 
                 progress_bar.progress(1.0)
@@ -1513,21 +1513,21 @@ def display_quality_analysis():
             st.warning(f"{len(quality_results['flagged_segments'])} segment(s) were flagged as requiring human transcription due to gibberish or unsupported language.")
             with st.expander("View flagged segments"):
                 df_flagged = pd.DataFrame(quality_results['flagged_segments'])
-                st.dataframe(df_flagged[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+                st.dataframe(df_flagged[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], width='stretch')
         
         # Display long segments
         if quality_results['long_segments']:
             st.error(f"Found {len(quality_results['long_segments'])} segment(s) longer than 120 seconds - possible missing transcription!")
             with st.expander("View long segments"):
                 df_long = pd.DataFrame(quality_results['long_segments'])
-                st.dataframe(df_long[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+                st.dataframe(df_long[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], width='stretch')
         
         # Display gap segments
         if quality_results['gap_segments']:
             st.warning(f"Found {len(quality_results['gap_segments'])} segment(s) with gaps > 60s")
             with st.expander("View segments with gaps"):
                 df_gaps = pd.DataFrame(quality_results['gap_segments'])
-                st.dataframe(df_gaps[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], use_container_width=True)
+                st.dataframe(df_gaps[['Start Time', 'End Time', 'Speaker', 'Text', label_col]], width='stretch')
         
         # Display summary
         if quality_results['total_issues'] == 0:
@@ -1611,7 +1611,7 @@ def main():
                 st.subheader("✅ Chunked Transcript Preview (5 segments per chunk)")
                 try:
                     chunked_preview = pd.read_excel(output_files['chunked_excel'], sheet_name='Chunked_Transcript').head(5)
-                    st.dataframe(chunked_preview, use_container_width=True)
+                    st.dataframe(chunked_preview, width='stretch')
                     
                     # Show sample of combined text and Notes column
                     if len(chunked_preview) > 0:
@@ -1624,7 +1624,7 @@ def main():
                             st.subheader("Quality Analysis Notes")
                             notes_preview = chunked_preview[['Chunk_Number', 'Notes']].dropna(subset=['Notes'])
                             if not notes_preview.empty:
-                                st.dataframe(notes_preview, use_container_width=True)
+                                st.dataframe(notes_preview, width='stretch')
                             else:
                                 st.info("No quality issues detected in preview chunks")
                         
@@ -1632,7 +1632,7 @@ def main():
                     try:
                         quality_summary = pd.read_excel(output_files['chunked_excel'], sheet_name='Quality_Summary')
                         st.subheader("Chunked Quality Analysis")
-                        st.dataframe(quality_summary, use_container_width=True)
+                        st.dataframe(quality_summary, width='stretch')
                     except:
                         pass
                 except Exception as e:
@@ -1643,7 +1643,7 @@ def main():
                 st.subheader("Merged Transcript Preview (Individual Segments)")
                 try:
                     df_preview = pd.read_csv(output_files['merged_csv']).head(10)
-                    st.dataframe(df_preview, use_container_width=True)
+                    st.dataframe(df_preview, width='stretch')
                     st.warning("Chunked files not found - showing merged transcript instead")
                 except Exception as e:
                     st.warning(f"Could not load merged preview: {str(e)}")
